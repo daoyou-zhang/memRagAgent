@@ -1,0 +1,15 @@
+# 依赖文件夹（前端/后端通用）
+node_modules/
+vendor/
+# 构建产物
+dist/
+build/
+# 日志/缓存文件
+*.log
+.cache/
+# IDE 配置文件（根据自己的编辑器添加，如 VS Code）
+.vscode/
+.idea/
+# 系统临时文件
+.DS_Store
+Thumbs.db
