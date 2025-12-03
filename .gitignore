@@ -1,6 +1,6 @@
 # 依赖文件夹（前端/后端通用）
 node_modules/
-venv/
+backend/venv/
 vendor/
 # 构建产物
 dist/
