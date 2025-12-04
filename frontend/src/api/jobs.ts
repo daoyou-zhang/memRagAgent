@@ -41,6 +41,47 @@ export async function createSemanticJob(
   return http.post<MemoryJob>('/api/memory/jobs/semantic', payload)
 }
 
+export async function createProfileJob(payload: Pick<CreateEpisodicJobPayload, 'user_id' | 'project_id'>): Promise<MemoryJob> {
+  return http.post<MemoryJob>('/api/memory/jobs/profile', payload)
+}
+
+export async function closeSession(sessionId: string): Promise<{
+  status: string
+  session_id: string
+  auto_episodic_enabled: boolean
+  auto_semantic_enabled: boolean
+  auto_profile_enabled: boolean
+  message_count: number
+  episodic_min_messages: number
+  semantic_min_messages: number
+  created_jobs: Array<{
+    id: number
+    job_type: string
+    session_id: string
+    user_id: string | null
+    project_id: string | null
+    status: string
+  }>
+}> {
+  return http.post(`/api/memory/sessions/${encodeURIComponent(sessionId)}/close`, {})
+}
+
+export async function createProfileJobAuto(payload: {
+  user_id: string
+  project_id?: string
+  min_new_semantic?: number
+  session_id?: string
+}): Promise<{
+  status: 'created' | 'no_need'
+  user_id: string
+  project_id?: string | null
+  new_semantic_count: number
+  min_new_semantic: number
+  job?: MemoryJob
+}> {
+  return http.post('/api/memory/jobs/profile/auto', payload)
+}
+
 export async function listJobs(params?: {
   status?: string
   session_id?: string

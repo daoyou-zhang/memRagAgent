@@ -1,15 +1,24 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import '../App.css'
-import { createEpisodicJob, createSemanticJob, listJobs, runJob, type MemoryJob } from '../api/jobs'
+import {
+  createEpisodicJob,
+  createSemanticJob,
+  createProfileJob,
+  listJobs,
+  runJob,
+  closeSession,
+  createProfileJobAuto,
+  type MemoryJob,
+} from '../api/jobs'
 
 function JobsPage() {
-  const [formUserId, setFormUserId] = useState('u_123')
-  const [formProjectId, setFormProjectId] = useState('proj_memRagAgent')
-  const [formSessionId, setFormSessionId] = useState('sess_demo')
+  const [formUserId, setFormUserId] = useState('48eedcd8-ed89-464c-8109-7bcb6fe94e36')
+  const [formProjectId, setFormProjectId] = useState('DAOYOUTEST')
+  const [formSessionId, setFormSessionId] = useState('')
   const [formStartId, setFormStartId] = useState('1')
   const [formEndId, setFormEndId] = useState('100')
 
-  const [formJobType, setFormJobType] = useState<'episodic' | 'semantic'>('episodic')
+  const [formJobType, setFormJobType] = useState<'episodic' | 'semantic' | 'profile'>('episodic')
 
   const [jobs, setJobs] = useState<MemoryJob[]>([])
   const [loading, setLoading] = useState(false)
@@ -18,6 +27,13 @@ function JobsPage() {
 
   const [filterStatus, setFilterStatus] = useState<string>('')
   const [filterSessionId, setFilterSessionId] = useState<string>('')
+
+  const [closeSessionId, setCloseSessionId] = useState('')
+  const [closeSessionResult, setCloseSessionResult] = useState<string>('')
+
+  const [autoProfileUserId, setAutoProfileUserId] = useState(formUserId)
+  const [autoProfileProjectId, setAutoProfileProjectId] = useState(formProjectId)
+  const [autoProfileResult, setAutoProfileResult] = useState<string>('')
 
   const loadJobs = async () => {
     setLoading(true)
@@ -57,8 +73,11 @@ function JobsPage() {
 
       if (formJobType === 'episodic') {
         await createEpisodicJob(payload)
-      } else {
+      } else if (formJobType === 'semantic') {
         await createSemanticJob(payload)
+      } else {
+        // profile_aggregate Job 只需要 user_id / project_id
+        await createProfileJob({ user_id: payload.user_id, project_id: payload.project_id })
       }
 
       await loadJobs()
@@ -81,6 +100,110 @@ function JobsPage() {
 
   return (
     <div className="page-container">
+      <section className="section-card" style={{ marginBottom: '1rem' }}>
+        <h2 className="section-title">会话关闭 & 画像自动 Job 调度（后端自动逻辑入口）</h2>
+        <div style={{ display: 'grid', gap: '0.75rem' }}>
+          <div>
+            <h3 style={{ margin: 0, marginBottom: '0.25rem', fontSize: '0.95rem' }}>关闭会话并按 auto_* 开关自动创建 Job</h3>
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+              <label>
+                session_id:{' '}
+                <input
+                  value={closeSessionId}
+                  onChange={(e) => setCloseSessionId(e.target.value)}
+                  style={{ minWidth: '14rem' }}
+                  placeholder="与后端 conversation_sessions.session_id 一致"
+                />
+              </label>
+              <button
+                type="button"
+                onClick={async () => {
+                  setError(null)
+                  setCloseSessionResult('')
+                  if (!closeSessionId) {
+                    setCloseSessionResult('请先填写 session_id')
+                    return
+                  }
+                  try {
+                    const resp = await closeSession(closeSessionId)
+                    setCloseSessionResult(
+                      `status=${resp.status}, messages=${resp.message_count}, created_jobs=${resp.created_jobs.length}`,
+                    )
+                    await loadJobs()
+                  } catch (err) {
+                    const msg = (err as Error).message
+                    setError(msg)
+                    setCloseSessionResult(`调用失败: ${msg}`)
+                  }
+                }}
+              >
+                关闭会话并根据 auto_* 创建 Job
+              </button>
+            </div>
+            {closeSessionResult && (
+              <p className="muted-text" style={{ marginTop: '0.25rem' }}>
+                {closeSessionResult}
+              </p>
+            )}
+          </div>
+
+          <div>
+            <h3 style={{ margin: 0, marginBottom: '0.25rem', fontSize: '0.95rem' }}>
+              按 semantic 增量触发画像 Job（/jobs/profile/auto）
+            </h3>
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+              <label>
+                user_id:{' '}
+                <input
+                  value={autoProfileUserId}
+                  onChange={(e) => setAutoProfileUserId(e.target.value)}
+                  style={{ minWidth: '10rem' }}
+                />
+              </label>
+              <label>
+                project_id:{' '}
+                <input
+                  value={autoProfileProjectId}
+                  onChange={(e) => setAutoProfileProjectId(e.target.value)}
+                  style={{ minWidth: '10rem' }}
+                />
+              </label>
+              <button
+                type="button"
+                onClick={async () => {
+                  setError(null)
+                  setAutoProfileResult('')
+                  if (!autoProfileUserId) {
+                    setAutoProfileResult('请先填写 user_id')
+                    return
+                  }
+                  try {
+                    const resp = await createProfileJobAuto({
+                      user_id: autoProfileUserId,
+                      project_id: autoProfileProjectId || undefined,
+                    })
+                    setAutoProfileResult(
+                      `status=${resp.status}, new_semantic=${resp.new_semantic_count}, min=${resp.min_new_semantic}`,
+                    )
+                    await loadJobs()
+                  } catch (err) {
+                    const msg = (err as Error).message
+                    setError(msg)
+                    setAutoProfileResult(`调用失败: ${msg}`)
+                  }
+                }}
+              >
+                检查并按增量创建 profile Job
+              </button>
+            </div>
+            {autoProfileResult && (
+              <p className="muted-text" style={{ marginTop: '0.25rem' }}>
+                {autoProfileResult}
+              </p>
+            )}
+          </div>
+        </div>
+      </section>
       <section className="section-card">
         <h2 className="section-title">创建 Job（episodic / semantic）</h2>
         <form onSubmit={handleCreateJob} style={{ display: 'grid', gap: '0.5rem' }}>
@@ -89,10 +212,11 @@ function JobsPage() {
               Job 类型:{' '}
               <select
                 value={formJobType}
-                onChange={(e) => setFormJobType(e.target.value as 'episodic' | 'semantic')}
+                onChange={(e) => setFormJobType(e.target.value as 'episodic' | 'semantic' | 'profile')}
               >
                 <option value="episodic">episodic（会话总结）</option>
                 <option value="semantic">semantic（画像记忆抽取）</option>
+                <option value="profile">profile（画像聚合刷新）</option>
               </select>
             </label>
           </div>

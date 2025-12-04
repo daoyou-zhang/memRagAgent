@@ -165,3 +165,83 @@ def generate_semantic_memories(
     except json.JSONDecodeError:
         # 如果解析失败，直接忽略本次抽取
         return []
+
+
+def generate_profile_from_semantics(
+    user_id: str,
+    project_id: str | None,
+    semantic_items: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """根据若干条 semantic 记忆聚合生成结构化画像 JSON。
+
+    `semantic_items` 预期形如：[{"text": ..., "tags": [...], "importance": ...}, ...]
+    返回一个 Python dict，对应文档中定义的 profile 结构；调用方可直接返回或落库。
+    """
+
+    if not semantic_items:
+        return {
+            "user_id": user_id,
+            "project_id": project_id,
+            "communication_style": {},
+            "interests": [],
+            "risk_preference": None,
+            "tools_and_habits": [],
+            "social_relations": [],
+            "project_facts": {},
+        }
+
+    # 为避免 prompt 过长，仅截取前若干条（importance 已在上游排序）
+    max_items = 40
+    trimmed_items = semantic_items[:max_items]
+
+    system_prompt = (
+        "你是一个画像聚合助手，将若干条 semantic 记忆汇总为结构化用户画像 JSON。"  # noqa: E501
+        "请基于给定的语义记忆，按照以下字段输出一个 JSON 对象（JSON 的 key 保持为下列英文单词，"  # noqa: E501
+        "但所有中文可读内容一律使用简体中文描述）：\n"
+        "- user_id: 字符串\n"
+        "- project_id: 字符串或 null\n"
+        "- communication_style: 对象，描述语气、语言、回答风格等（用中文描述）\n"
+        "- interests: 字符串数组，描述长期兴趣与关注点（数组元素用中文）\n"
+        "- risk_preference: 字符串，描述大致决策/风险偏好（用中文）\n"
+        "- tools_and_habits: 字符串数组，描述常用工具、工作/学习习惯（用中文）\n"
+        "- social_relations: 字符串数组，描述重要的人物关系或协作模式（用中文）\n"
+        "- project_facts: 对象，key 为项目 ID，value 为该项目的关键信息（如技术栈、设计原则等，内容用中文）。\n"
+        "请尽量基于提供的记忆推断，不要编造与记忆完全无关的内容；信息不足的字段可以给出简短的中文描述或使用空对象/空数组。"  # noqa: E501
+    )
+
+    user_prompt = (
+        "下面是某个用户的一组 semantic 记忆条目，请基于这些条目生成上述结构化画像 JSON。"  # noqa: E501
+        f"\n- user_id: {user_id}\n- project_id: {project_id or 'null'}\n\n"
+        "【语义记忆条目（JSON 数组）】\n"
+        f"{json.dumps(trimmed_items, ensure_ascii=False)}\n\n"
+        "请只输出一个 JSON 对象，不要包含其他解释性文字。"
+    )
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+
+    raw = chat_completion(messages)
+
+    try:
+        data = json.loads(raw)
+        if isinstance(data, dict):
+            # 确保至少包含 user_id / project_id 字段
+            data.setdefault("user_id", user_id)
+            data.setdefault("project_id", project_id)
+            return data
+    except json.JSONDecodeError:
+        pass
+
+    # 解析失败或返回非 dict 时，退化为一个空结构
+    return {
+        "user_id": user_id,
+        "project_id": project_id,
+        "communication_style": {},
+        "interests": [],
+        "risk_preference": None,
+        "tools_and_habits": [],
+        "social_relations": [],
+        "project_facts": {},
+    }

@@ -18,3 +18,8 @@ CREATE INDEX idx_conv_sessions_user_project
 
 CREATE INDEX idx_conv_sessions_status
     ON conversation_sessions (status);
+
+ALTER TABLE conversation_sessions
+  ADD COLUMN auto_episodic_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  ADD COLUMN auto_semantic_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  ADD COLUMN auto_profile_enabled  BOOLEAN NOT NULL DEFAULT FALSE;

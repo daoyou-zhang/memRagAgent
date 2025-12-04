@@ -343,6 +343,249 @@ npm run dev
     - 日常检索 / RAG 直接使用 `memories`（semantic + episodic）；
     - 人格画像只是这些记忆的一个上层投影，随记忆演化而不断更新，而不是一套割裂的“平行人格系统”。
 
+### 2.1.3 Profiles 聚合子模块设计（基于记忆的人格系统）
+
+在上文中，`semantic` 已经被定义为“事实 / 偏好 / 设定 / 人物关系”等长期语义记忆，Profiles 只是构建在这些记忆之上的**视图层**，而不是一套独立的人格系统。本节描述 Profiles 聚合模块的实现思路与与 Memory 的关系。
+
+#### 2.1.3.1 模块位置与职责边界
+
+- 代码组织：
+  - 与 `backend/memory` 并列新增 `backend/profiles` 子目录：
+    - `models/profile.py`（可选）：定义 `Profile` ORM 模型；
+    - `routes/profiles.py`：画像相关 REST API；
+    - `services/profile_aggregate.py`：从 `Memory` 中抽取 & 聚合画像的业务逻辑；
+  - 与 Memory Service 运行在同一进程中，共享同一套数据库连接与 LLM client。
+- 职责：
+  - **不直接管理底层记忆**（不写入 `memories` 表）；
+  - 只负责：
+    - 从 `memories` 中读取 `semantic` / `episodic`；
+    - 调用 LLM 将其聚合为结构化画像 JSON；
+    - 提供上游“按用户/项目加载画像”的查询接口。
+
+这样可以保证：底层事实仍以 `memories` 为唯一权威来源，Profiles 只是其一个“投影 / 抽象层”，出现不一致时可以随时重建。
+
+#### 2.1.3.2 Profile 数据结构（概念）
+
+一个 Profile 可以看作是一个按维度划分的 JSON 对象，示例：
+
+```jsonc
+{
+  "user_id": "u_123",
+  "project_id": "proj_memRagAgent", // 可空，表示全局画像
+  "communication_style": {
+    "tone": "鼓励式，偏直接给结论",
+    "language": "中文为主，偶尔掺杂英文术语"
+  },
+  "interests": [
+    "Agent 架构设计",
+    "RAG 与记忆系统结合"
+  ],
+  "risk_preference": "在技术选型上偏稳健，但愿意尝试新模型",
+  "tools_and_habits": [
+    "Windows 开发环境",
+    "喜欢有清晰文档和 TODO 列表"
+  ],
+  "social_relations": [
+    "与某助手长期协作，偏向 pair programming 模式"
+  ],
+  "project_facts": {
+    "memRagAgent": {
+      "stack": "Flask + Postgres + React",
+      "design_principles": ["记忆可追溯", "模块化", "自进化能力"]
+    }
+  }
+}
+```
+
+实现时可以将该 JSON 直接存入一个 `profiles` 表的 `profile_json` 字段中，或完全不建表，仅在需要时现算（代价更高）。
+
+#### 2.1.3.3 画像聚合 Job 设计
+
+为复用已有 Job 思路，Profiles 聚合也采用“Job 驱动”的方式：
+
+- Job 来源：
+  - 可以新增专门的 `profiles_jobs` 表；
+  - 或在现有 `memory_generation_jobs` 中增加一种 `job_type = 'profile_aggregate'`；
+  - 本项目更倾向于后者，保持统一 Job 表：
+    - `job_type = 'profile_aggregate'`；
+    - `target_types` 可以为空或标记为 `['profile']` 以示区分。
+- Job 关键字段：
+  - `user_id`（必填）；
+  - 可选 `project_id`（仅聚合某个项目下的画像）；
+  - `status` / `error_message` 等与其他 Job 一致。
+
+执行流程（MVP）：
+
+1. 创建 Job：
+   - 上游或控制台触发 `POST /api/profiles/jobs`，指定 `user_id`（和可选 `project_id`）；
+   - 后端在 `memory_generation_jobs` 中插入一条 `job_type='profile_aggregate'` 的记录。
+2. 执行 Job：
+   - 通过 `POST /api/profiles/jobs/<id>/run`（或统一的 `/api/memory/jobs/<id>/run`），在 worker 中执行：
+     1. 查询该 `user_id`（和 `project_id`）下的 `semantic` 记忆，必要时补充少量高重要度 `episodic`；
+     2. 将这些记忆（含 `text` / `tags` / `importance` 等）连同聚合模板一并传给 LLM；
+     3. 要求 LLM 输出一个结构化 Profile JSON（见上小节）；
+     4. 将该 JSON 写入 `profiles` 表（若存在则覆盖），并在 `extra_metadata` 中记录参与聚合的 memory_ids 与 job_id；
+     5. 将 Job 状态置为 `done`，失败时记录 `error_message`。
+
+#### 2.1.3.4 Profiles 查询 API 与上游使用方式
+
+- 后端 API 形态：
+  - `GET /api/profiles/<user_id>`：加载某用户的最新画像；
+    - 可接受 `project_id` 作为查询参数，用于获取项目级画像；
+  - 返回结构示例：
+
+    ```jsonc
+    {
+      "user_id": "u_123",
+      "project_id": "proj_memRagAgent",
+      "profile": { /* 上文 profile_json 内容 */ },
+      "updated_at": "2025-12-04T12:34:56Z"
+    }
+    ```
+
+- 上游调用方式：
+  - 在新建 Agent 或启动新对话时：
+    1. 首先调用 `GET /api/profiles/<user_id>` 注入画像；
+    2. 结合 `semantic` / `episodic` / `working` 的 Memory-RAG 结果，一起构造 LLM 的 system prompt 与检索上下文；
+  - 当底层记忆发生重要变化（新增大量 semantic / 多次对话后）：
+    - 通过控制台或后台任务触发 `profile_aggregate` Job，刷新画像。
+
+#### 2.1.3.5 自进化与画像的关系
+
+- Profiles 本身不直接“学习”，而是依赖底层记忆的自进化：
+  - semantic / episodic 随对话与 Job 不断生成与更新；
+  - 定期的聚合 Job 重新扫描这些记忆，生成新的画像；
+- 当记忆层执行“强化 / 合并 / 淘汰”等自优化策略时：
+  - Profiles 在下一次聚合时会自然反映这些变化（例如：兴趣从 A 渐渐转向 B，旧偏好被新记忆覆盖）。
+
+因此，画像系统是“挂在记忆中心之上的演化视图”，而不是独立成长的一棵树，这保证了：
+
+- **可追溯性**：任何画像结论都能追溯到具体 semantic / episodic 记忆；
+- **一致性**：当画像与某条记忆冲突时，以记忆为准，通过再次聚合修正画像；
+- **易扩展**：未来可根据需要增加新的画像维度，只需在聚合 prompt 与 Profile JSON 结构中扩展字段。
+
+#### 2.1.3.6 记忆生成 & Profiles Job 总体流程（含 env 控制点）
+
+这一小节用一个逻辑草图，把“对话 → 记忆 → 画像”的 Job 流和全局 env 控制点串起来，便于整体理解，也方便后续调优成本。
+
+```mermaid
+flowchart TD
+  A[对话进行中\nconversation_messages] --> B[会话结束 / 定时触发]
+
+  B --> C[创建 Job\n- episodic_summary\n- semantic_extract\n- profile_aggregate]
+  C --> D[Job 表\nmemory_generation_jobs\nstatus=pending]
+
+  subgraph Scheduler[嵌入进程 Job 调度器\n(app.py 中的后台线程)
+  ]
+    E[读取 env\nJOB_SCHEDULER_ENABLED\nJOB_RUN_WINDOW_*] --> F[判断当前时间\n是否落入各 job_type 的执行窗口]
+    F --> G[按类型拉取 pending Job\n调用 /api/memory/jobs/<id>/run]
+  end
+
+  D --> Scheduler
+  G --> H[run_job(job_id) 内部逻辑]
+
+  H --> H1[按 job_type 选择分支\n- episodic_summary\n- semantic_extract\n- profile_aggregate]
+  H1 --> H2[写入 Memory / Profiles 等结果\n并更新 job.status]
+
+  subgraph Profiles[Profiles 子系统]
+    S1[Memory(type='semantic')] --> P1[聚合画像\nprofiles.profile_json]
+    P1 --> P2[旧版本写入\nprofiles_history]
+  end
+
+  H2 --> S1
+```
+
+关键控制点说明：
+
+- **Job 创建层**（触发条件）
+  - `episodic_summary` / `semantic_extract`：
+    - 目前主要通过前端 Jobs 控制台或上游服务“手动创建 Job”；
+    - 未来可以在 `conversation_sessions` 的“会话关闭”操作中，依据 `auto_episodic_enabled` / `auto_semantic_enabled` 自动插入 Job。
+  - `profile_aggregate`：
+    - 手动创建：`POST /api/memory/jobs/profile`；
+    - 自动创建：`POST /api/memory/jobs/profile/auto`，根据“新增 semantic 条数”决定是否创建画像 Job，默认阈值由 env `PROFILE_AUTO_JOB_MIN_NEW_SEMANTIC` 控制（可被单次请求覆盖）。
+
+- **画像查询层**（在线刷新 vs 缓存命中）
+  - API：`GET /api/profiles/<user_id>?project_id=...&force_refresh=...`。
+  - 默认行为：
+    - 若存在缓存画像且未显式 `force_refresh=true`，优先返回缓存；
+    - 若 `PROFILE_AUTO_REFRESH_ENABLED=true`，同时会检查自 `profiles.updated_at` 以来新增的 `semantic` 条数是否达到 `PROFILE_MIN_NEW_SEMANTIC_FOR_REFRESH`，满足时本次请求会自动调用 LLM 重新聚合画像并更新缓存。
+  - 成本控制：
+    - 关闭在线自动刷新：`PROFILE_AUTO_REFRESH_ENABLED=false` → 只在 `force_refresh=true` 或缓存缺失时调用 LLM。
+    - 调整在线刷新灵敏度：通过 `PROFILE_MIN_NEW_SEMANTIC_FOR_REFRESH` 增大/减小阈值。
+
+- **调度执行层（嵌入进程线程）**
+  - 行为：在 `backend/memory/app.py` 中启动一个后台线程，循环：
+    - 读取当前时间；
+    - 对三类 job_type：
+      - `episodic_summary` → `JOB_RUN_WINDOW_EPISODIC`
+      - `semantic_extract` → `JOB_RUN_WINDOW_SEMANTIC`
+      - `profile_aggregate` → `JOB_RUN_WINDOW_PROFILE`
+    - 落入相应时间窗口时：查询少量 `status='pending'` 的 Job，并通过 REST `POST /api/memory/jobs/<id>/run` 触发执行。
+  - 全局开关：
+    - `JOB_SCHEDULER_ENABLED=false` 时，调度线程不启动，所有 Job 仅在手动点击“执行”时运行。
+  - 成本与节奏：
+    - 可以把所有自动 Job 安排在夜间窗口执行，例如：
+      - `JOB_RUN_WINDOW_EPISODIC=02:00-05:00`
+      - `JOB_RUN_WINDOW_SEMANTIC=02:00-05:00`
+      - `JOB_RUN_WINDOW_PROFILE=03:00-06:00`
+
+- **Profiles 自进化与版本管理**
+  - `profile_aggregate` Job 分支在 `run_job` 中：
+    - 汇总高重要度的 `semantic` 记忆调用 LLM 聚合画像；
+    - 若存在旧画像，则先把旧 `profile_json` 记录到 `profiles_history`（自增 version），再覆盖 `profiles` 当前值；
+    - 这样可以在控制台里回溯画像演化过程，支撑“自进化可解释性”。
+
+#### 2.1.3.7 会话关闭 + 消息数阈值下的自动 Job 创建
+
+在前文中，Job 的创建主要依赖两条路径：
+
+- 手动在控制台 / 上游服务中调用：
+  - `POST /api/memory/jobs/episodic`
+  - `POST /api/memory/jobs/semantic`
+  - `POST /api/memory/jobs/profile`
+- 定时 / 事件触发调用：
+  - `POST /api/memory/jobs/profile/auto`
+
+为了让“对话结束时”自动生成合适的记忆，本项目增加了：
+
+- `conversation_sessions` 表中的三个位开关：
+  - `auto_episodic_enabled BOOLEAN DEFAULT TRUE`
+  - `auto_semantic_enabled BOOLEAN DEFAULT TRUE`
+  - `auto_profile_enabled  BOOLEAN DEFAULT FALSE`
+- 会话关闭 API：`POST /api/memory/sessions/<session_id>/close`
+
+关闭逻辑（MVP）：
+
+- 根据 `session_id` 查找 `conversation_sessions`：
+  - 若不存在 → 404；
+  - 若 `status='closed'` → 返回 `status=already_closed`.
+- 否则：
+  - 将 `status` 置为 `closed`，`closed_at = now()`；
+  - 统计该会话的消息条数：
+    - `msg_count = COUNT(conversation_messages WHERE session_id=...)`.
+  - 从 env 读取消息数阈值：
+    - `EPISODIC_AUTO_MIN_MESSAGES`（默认 3）；
+    - `SEMANTIC_AUTO_MIN_MESSAGES`（默认 5）；
+    - `PROFILE_AUTO_MIN_MESSAGES`（默认 10）.
+  - 若 `auto_episodic_enabled=true` 且 `msg_count >= EPISODIC_AUTO_MIN_MESSAGES`：
+    - 自动创建一条 `job_type='episodic_summary'`、`target_types=['episodic']` 的 Job；
+  - 若 `auto_semantic_enabled=true` 且 `msg_count >= SEMANTIC_AUTO_MIN_MESSAGES`：
+    - 自动创建一条 `job_type='semantic_extract'`、`target_types=['semantic']` 的 Job；
+  - 若 `auto_profile_enabled=true` 且 `msg_count >= PROFILE_AUTO_MIN_MESSAGES`：
+    - 为该 `user_id + project_id` 创建一条 `job_type='profile_aggregate'` 的 Job.
+
+返回值中会携带：
+
+- `message_count`：本次会话累计消息数；
+- `episodic_min_messages` / `semantic_min_messages` / `profile_min_messages`：本次使用的阈值；
+- `created_jobs`：实际创建的 Job 列表（含 job_type / session_id / user_id / project_id）。
+
+这样可以保证：
+
+- 短会话不会因为零星几条消息就产生大量 episodic / semantic 总结任务；
+- 每条会话可以按需配置“关闭时是否自动生成总结 / 语义记忆 / 画像 Job”。
+
 ### 2.1.4 `tags` 字段的设计原则与自优化
 
 `Memory.tags` 使用 JSONB 存储，用于给记忆打上多个维度的标签，便于筛选和后续 RAG / 画像聚合。建议遵循以下原则：
@@ -767,7 +1010,61 @@ npm run dev
 
 ---
 
-## 6. 总结
+## 6. Memory-RAG 设计（初稿）
+
+> 本节为后续“记忆增强检索 / 推理（Memory-RAG）”的设计草图，当前实现以 Memory Service + Profiles + 控制台为主，RAG 部分将逐步落地。
+
+### 6.1 目标与角色分工
+
+- **目标**：在已有 Memory & Profiles 之上，提供一个统一的“记忆检索 + 重排 + 注入 LLM”能力，满足：
+  - 聊天 / Agent 推理时，从长期记忆中取出少量高价值上下文；
+  - 支持按 user_id / project_id / session_id 做 scope 限定；
+  - 支持 importance / recency / 画像偏好等因素综合排序；
+  - 方便在前端控制台中调试“给定 query 时，被选中的记忆有哪些，为什么”。
+
+- **角色分工**：
+  - Memory Service：
+    - 保存 working / episodic / semantic 记忆；
+    - 提供结构化查询与 Job 流水线；
+    - 负责生成 embeddings（未来）。
+  - Profiles：
+    - 从 semantic / episodic 聚合出画像 JSON，用于构造 system prompt 或过滤候选记忆。
+  - RAG 子模块：
+    - 在 Memory Service 内部或旁路服务中，完成“向量检索 + 规则过滤 + 重排”。
+
+### 6.2 数据来源与向量存储（规划）
+
+- **数据来源**：
+  - `Memory.type='semantic'`：主要 RAG 召回来源（用户偏好 / 项目事实）。
+  - `Memory.type='episodic'`：作为“最近一段会话的总结”，可选地加入 RAG（按 recency + importance 加权）。
+  - Profiles：不直接参与向量检索，但会通过画像字段：
+    - 影响 prompt（描述用户风格 / 项目背景）；
+    - 未来可用于过滤候选记忆（例如：只取与某 project_facts 相关的记忆）。
+
+- **向量存储方案（MVP 规划）**：
+  - 为 Memory 新增 embedding 字段或单独建 `memory_embeddings` 表：
+    - `memory_id` → 对应 `memories.id`；
+    - `embedding` → 向量列（可用 Postgres + pgvector 或简单文件/内存索引）；
+    - `created_at` / `updated_at`。
+  - 在生成 semantic / episodic 时：
+    - 同步或异步调用 embedding 模型（可与当前 LLM Client 复用或分离）；
+    - 写入 / 更新向量表。
+
+### 6.3 RAG 流水线（概念）
+
+```mermaid
+flowchart TD
+  Q[上游请求\n(query + user_id + project_id + session_id)] --> F1[构造检索范围\n- 限定 user_id / project_id\n- 过滤 type in ['semantic','episodic']]
+
+  F1 --> F2[向量检索\n- 生成 query embedding\n- 在向量表中做 top-k 近邻搜索]
+
+  F2 --> F3[规则过滤\n- 按 importance / recency / tags 过滤\n- 可选：按 Profiles 中的 project_facts 过滤]
+
+  F3 --> F4[重排\n- 结合相关度 / importance / recency\n- 控制最终返回数量]
+
+  F4 --> F5[构造 LLM 上下文\n- 拼接选中的 Memory 文本\n- 加入 Profiles 的关键信息\n- 返回给上游用于构造 prompt]
+
+## 7. 总结
 
 本次骨架实现的核心成果：
 

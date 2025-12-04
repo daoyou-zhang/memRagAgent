@@ -81,6 +81,55 @@ class MemoryGenerationJob(Base):
     )
 
 
+class MemoryEmbedding(Base):
+    __tablename__ = "memory_embeddings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    memory_id: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    # 目前使用 JSONB 存储向量数组，后续切换到 pgvector 时只需调整列类型和 ORM 定义
+    embedding: Mapped[Any] = mapped_column(JSONB, nullable=False)
+    model_name: Mapped[str] = mapped_column(String(128), nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class ConversationSession(Base):
+    __tablename__ = "conversation_sessions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    session_id: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
+
+    user_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    agent_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    project_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+
+    title: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    closed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    auto_episodic_enabled: Mapped[bool] = mapped_column(
+        Integer, nullable=False, default=1
+    )
+    auto_semantic_enabled: Mapped[bool] = mapped_column(
+        Integer, nullable=False, default=1
+    )
+    auto_profile_enabled: Mapped[bool] = mapped_column(
+        Integer, nullable=False, default=0
+    )
+
+
 class ConversationMessage(Base):
     __tablename__ = "conversation_messages"
 
@@ -95,6 +144,39 @@ class ConversationMessage(Base):
     role: Mapped[str] = mapped_column(String(16), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     extra_metadata: Mapped[Optional[Any]] = mapped_column("metadata", JSONB, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class Profile(Base):
+    __tablename__ = "profiles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    user_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    project_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+
+    profile_json: Mapped[Any] = mapped_column(JSONB, nullable=False)
+    extra_metadata: Mapped[Optional[Any]] = mapped_column(JSONB, nullable=True)
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class ProfileHistory(Base):
+    __tablename__ = "profiles_history"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    user_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    project_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    profile_json: Mapped[Any] = mapped_column(JSONB, nullable=False)
+    extra_metadata: Mapped[Optional[Any]] = mapped_column(JSONB, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

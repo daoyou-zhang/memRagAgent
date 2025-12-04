@@ -13,8 +13,8 @@ function MemoriesPage() {
   const [healthError, setHealthError] = useState<string | null>(null)
 
   // create memory form state
-  const [cmUserId, setCmUserId] = useState('u_123')
-  const [cmProjectId, setCmProjectId] = useState('proj_memRagAgent')
+  const [cmUserId, setCmUserId] = useState('48eedcd8-ed89-464c-8109-7bcb6fe94e36')
+  const [cmProjectId, setCmProjectId] = useState('DAOYOUTEST')
   const [cmType, setCmType] = useState('semantic')
   const [cmText, setCmText] = useState('')
   const [cmTags, setCmTags] = useState('profile, preference')
@@ -22,8 +22,8 @@ function MemoriesPage() {
   const [cmMessage, setCmMessage] = useState<string | null>(null)
 
   // query state
-  const [qUserId, setQUserId] = useState('u_123')
-  const [qProjectId, setQProjectId] = useState('proj_memRagAgent')
+  const [qUserId, setQUserId] = useState('48eedcd8-ed89-464c-8109-7bcb6fe94e36')
+  const [qProjectId, setQProjectId] = useState('DAOYOUTEST')
   const [qText, setQText] = useState('')
   const [qTags, setQTags] = useState('profile')
   const [qLoading, setQLoading] = useState(false)
