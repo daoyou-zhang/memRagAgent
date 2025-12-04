@@ -79,3 +79,23 @@ class MemoryGenerationJob(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class ConversationMessage(Base):
+    __tablename__ = "conversation_messages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    session_id: Mapped[str] = mapped_column(String(128), nullable=False)
+
+    user_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    agent_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    project_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+
+    role: Mapped[str] = mapped_column(String(16), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    extra_metadata: Mapped[Optional[Any]] = mapped_column("metadata", JSONB, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )

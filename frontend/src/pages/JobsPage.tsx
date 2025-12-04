@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import '../App.css'
-import { createEpisodicJob, listJobs, runJob, type MemoryJob } from '../api/jobs'
+import { createEpisodicJob, createSemanticJob, listJobs, runJob, type MemoryJob } from '../api/jobs'
 
 function JobsPage() {
   const [formUserId, setFormUserId] = useState('u_123')
@@ -9,16 +9,24 @@ function JobsPage() {
   const [formStartId, setFormStartId] = useState('1')
   const [formEndId, setFormEndId] = useState('100')
 
+  const [formJobType, setFormJobType] = useState<'episodic' | 'semantic'>('episodic')
+
   const [jobs, setJobs] = useState<MemoryJob[]>([])
   const [loading, setLoading] = useState(false)
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  const [filterStatus, setFilterStatus] = useState<string>('')
+  const [filterSessionId, setFilterSessionId] = useState<string>('')
+
   const loadJobs = async () => {
     setLoading(true)
     setError(null)
     try {
-      const data = await listJobs({ status: 'pending' })
+      const data = await listJobs({
+        status: filterStatus || undefined,
+        session_id: filterSessionId || undefined,
+      })
       setJobs(data.items || [])
     } catch (err) {
       setError((err as Error).message)
@@ -39,13 +47,19 @@ function JobsPage() {
       const startId = formStartId ? Number(formStartId) : undefined
       const endId = formEndId ? Number(formEndId) : undefined
 
-      await createEpisodicJob({
+      const payload = {
         user_id: formUserId || undefined,
         project_id: formProjectId || undefined,
         session_id: formSessionId,
         start_message_id: Number.isNaN(startId) ? undefined : startId,
         end_message_id: Number.isNaN(endId) ? undefined : endId,
-      })
+      }
+
+      if (formJobType === 'episodic') {
+        await createEpisodicJob(payload)
+      } else {
+        await createSemanticJob(payload)
+      }
 
       await loadJobs()
     } catch (err) {
@@ -68,8 +82,20 @@ function JobsPage() {
   return (
     <div className="page-container">
       <section className="section-card">
-        <h2 className="section-title">创建 Episodic Job（会话总结任务）</h2>
+        <h2 className="section-title">创建 Job（episodic / semantic）</h2>
         <form onSubmit={handleCreateJob} style={{ display: 'grid', gap: '0.5rem' }}>
+          <div>
+            <label>
+              Job 类型:{' '}
+              <select
+                value={formJobType}
+                onChange={(e) => setFormJobType(e.target.value as 'episodic' | 'semantic')}
+              >
+                <option value="episodic">episodic（会话总结）</option>
+                <option value="semantic">semantic（画像记忆抽取）</option>
+              </select>
+            </label>
+          </div>
           <div>
             <label>
               用户 ID:{' '}
@@ -127,9 +153,40 @@ function JobsPage() {
 
       <section className="section-card" style={{ marginTop: '1rem' }}>
         <h2 className="section-title">Job 列表</h2>
-        <div style={{ marginBottom: '0.5rem' }}>
+        <div
+          style={{
+            marginBottom: '0.5rem',
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: '0.5rem',
+            alignItems: 'center',
+          }}
+        >
+          <label>
+            状态筛选:{' '}
+            <select
+              value={filterStatus}
+              onChange={(e) => setFilterStatus(e.target.value)}
+              style={{ minWidth: '8rem' }}
+            >
+              <option value="">全部</option>
+              <option value="pending">pending</option>
+              <option value="running">running</option>
+              <option value="done">done</option>
+              <option value="failed">failed</option>
+            </select>
+          </label>
+          <label>
+            会话 ID 筛选:{' '}
+            <input
+              value={filterSessionId}
+              onChange={(e) => setFilterSessionId(e.target.value)}
+              placeholder="留空表示全部会话"
+              style={{ width: '16rem' }}
+            />
+          </label>
           <button type="button" onClick={() => void loadJobs()} disabled={loading}>
-            {loading ? '刷新中...' : '刷新列表'}
+            {loading ? '刷新中...' : '按筛选条件刷新'}
           </button>
         </div>
         {error && <p style={{ color: 'red' }}>错误: {error}</p>}

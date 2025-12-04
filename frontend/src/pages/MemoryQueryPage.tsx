@@ -14,7 +14,8 @@ function MemoryQueryPage() {
   const [qUserId, setQUserId] = useState('u_123')
   const [qProjectId, setQProjectId] = useState('proj_memRagAgent')
   const [qText, setQText] = useState('')
-  const [qTags, setQTags] = useState('profile')
+  const [qTags, setQTags] = useState('')
+  const [qTypes, setQTypes] = useState<string>('semantic,episodic,working')
   const [qLoading, setQLoading] = useState(false)
   const [qError, setQError] = useState<string | null>(null)
   const [qItems, setQItems] = useState<QueryResultItem[]>([])
@@ -44,6 +45,17 @@ function MemoryQueryPage() {
         .map((t) => t.trim())
         .filter(Boolean)
 
+      const filters: NonNullable<Parameters<typeof queryMemories>[0]['filters']> = {
+        // 默认同时查询 semantic、episodic 和 working 三类记忆
+        types: qTypes
+          .split(',')
+          .map((t) => t.trim())
+          .filter(Boolean) as ('semantic' | 'episodic' | 'working')[],
+      }
+      if (tagsArray.length > 0) {
+        filters.tags = tagsArray
+      }
+
       const data = await queryMemories({
         user_id: qUserId || undefined,
         project_id: qProjectId || undefined,
@@ -51,10 +63,7 @@ function MemoryQueryPage() {
         top_k: 0,
         page: targetPage,
         page_size: pageSize,
-        filters: {
-          types: ['semantic'],
-          tags: tagsArray,
-        },
+        filters,
       })
 
       setPage(data.page)
@@ -132,6 +141,21 @@ function MemoryQueryPage() {
           </div>
           <div>
             <label>
+              记忆类型:{' '}
+              <select
+                value={qTypes}
+                onChange={(e) => setQTypes(e.target.value)}
+              >
+                <option value="semantic,episodic,working">semantic + episodic + working</option>
+                <option value="semantic,episodic">semantic + episodic</option>
+                <option value="semantic">semantic 仅语义记忆</option>
+                <option value="episodic">episodic 仅情节记忆</option>
+                <option value="working">working 仅工作记忆</option>
+              </select>
+            </label>
+          </div>
+          <div>
+            <label>
               标签筛选（逗号分隔）:{' '}
               <input
                 value={qTags}
@@ -173,7 +197,14 @@ function MemoryQueryPage() {
                         ? item.memory.tags.join(', ')
                         : ''}
                     </td>
-                    <td>{item.memory.created_at}</td>
+                    <td>
+                      {item.memory.created_at
+                        ? new Date(item.memory.created_at).toLocaleString('zh-CN', {
+                            hour12: false,
+                            timeZone: 'Asia/Shanghai',
+                          })
+                        : ''}
+                    </td>
                   </tr>
                 ))}
               </tbody>

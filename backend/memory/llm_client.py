@@ -1,5 +1,6 @@
 import os
 from typing import List, Dict, Any
+import json
 
 import requests
 from dotenv import load_dotenv
@@ -78,29 +79,31 @@ def chat_completion(messages: List[Dict[str, Any]], max_tokens: int | None = Non
 
 def generate_episodic_summary(
     session_id: str,
-    start_message_id: int | None,
-    end_message_id: int | None,
+    conversation_text: str,
 ) -> str:
     """为一次会话生成情节总结（episodic summary）。
 
-    MVP 版本：
-    - 先不从 conversation_messages 表中读取具体内容，只根据 meta 信息让大模型输出一条简要总结；
-    - 后续可以在这里接入真实的对话内容，提升总结质量。
+    输入为会话 ID 以及整理好的对话文本（可只包含截取后的若干条消息）。
     """
 
+    # 为避免超长对话影响效果和消耗，简单截断到前后若干字符
+    if len(conversation_text) > 4000:
+        conversation_text = conversation_text[-4000:]
+
     system_prompt = (
-        "你是一个记忆管理助手，只负责根据给出的元信息，"
-        "用简短的中文描述一次会话/任务的大致内容。"
-        "回答应当简洁，1~3 句话，偏向总结‘这次主要做了什么’。"
+        "你是一个记忆管理助手，负责根据对话内容生成情节总结 (episodic memory)。"
+        "请用简洁的中文总结这次会话/任务："
+        "1) 主要在讨论或实现什么；2) 做出了哪些关键决策或设计结论；"
+        "3) 可以适当提及重要的模块/表/字段等关键词，方便后续检索。"
+        "回答控制在 2~6 句话，不要复述所有细节。"
     )
 
     user_prompt = (
-        "现在有一条会话需要生成情节总结 (episodic summary)。\n"
-        f"- 会话 ID: {session_id}\n"
-        f"- 消息 ID 范围: {start_message_id} ~ {end_message_id}\n\n"
-        "目前系统尚未提供具体的对话内容，请你输出一条合理的、占位性的总结文案，"
-        "描述这次会话大致是在进行某种配置、设计或讨论。不要编造过多细节，"
-        "用自然、通顺的中文总结一两句即可。"
+        "下面是一段会话内容，请基于这些内容生成一条情节总结 (episodic summary)。\n"
+        f"- 会话 ID: {session_id}\n\n"
+        "【对话内容摘录】\n"
+        f"{conversation_text}\n\n"
+        "请按照系统提示生成总结。"
     )
 
     messages = [
@@ -109,3 +112,56 @@ def generate_episodic_summary(
     ]
 
     return chat_completion(messages)
+
+
+def generate_semantic_memories(
+    session_id: str,
+    conversation_text: str,
+) -> List[Dict[str, Any]]:
+    """从一段对话内容中抽取若干条 semantic 记忆。
+
+    返回值为若干条结构化条目，每条包含至少 text 字段，可选 category / tags。
+    具体落库由调用方决定。
+    """
+
+    if len(conversation_text) > 4000:
+        conversation_text = conversation_text[-4000:]
+
+    system_prompt = (
+        "你是一个用户画像和长期记忆抽取助手，负责从对话中提取可以长期保存的事实和偏好 "
+        "(semantic memory)。这些信息将用于后续的人格画像和检索。\n\n"
+        "请优先关注以下几个维度：\n"
+        "- 沟通与表达偏好（语言、回答风格、细节程度、展示形式等）；\n"
+        "- 知识与兴趣领域（工作/专业领域、长期关注的话题、兴趣爱好等）；\n"
+        "- 决策与风险偏好（保守/激进、是否喜欢多方案选择等）；\n"
+        "- 交互风格（是否喜欢系统提问澄清、是否接受直接指出问题等）；\n"
+        "- 常用工具或工作/学习方式（如果对话中有体现）。\n\n"
+        "输出时请使用 JSON 数组格式，每个元素是一个对象，形如：\n"
+        "{\"text\": \"一句话结论\", \"category\": \"communication\", \"tags\": [\"preference\", \"communication\"]}。\n"
+        "如果对话信息不足，可以返回空数组 []。不要编造与对话无关的内容。"
+    )
+
+    user_prompt = (
+        "下面是一段会话内容，请基于这些内容提取 0~若干条适合长期保存的 semantic 记忆：\n"
+        f"- 会话 ID: {session_id}\n\n"
+        "【对话内容摘录】\n"
+        f"{conversation_text}\n\n"
+        "请只输出一个 JSON 数组，不要包含其他解释性文字。"
+    )
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+
+    raw = chat_completion(messages)
+
+    try:
+        data = json.loads(raw)
+        if isinstance(data, list):
+            # 只保留 dict 条目
+            return [x for x in data if isinstance(x, dict)]
+        return []
+    except json.JSONDecodeError:
+        # 如果解析失败，直接忽略本次抽取
+        return []

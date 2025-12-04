@@ -290,7 +290,8 @@ npm run dev
     - 近几轮对话中的“短期工作上下文”，例如当前子任务、当前编辑的文件、当前推理中间结果等。
   - 特点：
     - 生命周期短，更多是“当前会话的 scratchpad”；
-    - 可以存入数据库，也可以只放在缓存/向量库中，命中过低的可以定期清理；
+    - 在实现上分为三层：Agent 进程内的运行时 working、上游应用内部的会话级缓存（如 Redis）、以及 Memory Service 所管理的 DB 中 `type='working'` 快照；
+    - 本项目的 Memory Service 与控制台**只负责管理数据库中的 `type='working'` 记录**，不直接连接或展示 Redis 等运行时缓存；
     - importance 一般偏低。
   - 适用场景示例：
     - 多轮推理中，记录“上一步已经检查过哪些文件”；
@@ -321,11 +322,57 @@ npm run dev
     - 用户的语言偏好、回答风格、常用技术栈；
     - 某个项目的长期约定（数据库选型、命名规范等）。
 
-整体关系可以理解为：
+- **`semantic_extract` Job 的设计思路**：
+  - 通过 `memory_generation_jobs` 中的 `job_type = 'semantic_extract'`，对某段 `conversation_messages` 运行一次“长期记忆抽取”：
+    - 后端使用 `generate_semantic_memories(session_id, conversation_text)` 调用 LLM；
+    - Prompt 会明确要求按上面的**画像维度**提取 0~N 条结论；
+    - LLM 输出一个 JSON 数组，每个元素形如：
+      - `{ "text": "一句话结论", "category": "communication", "tags": ["preference", "communication"] }`。
+  - 每条输出会被转换为一条 `Memory(type='semantic')`：
+    - `source = 'auto_semantic_extract'`；
+    - `tags` 至少包含：`"semantic_auto"` 和 `"category:<category>"`；
+    - `extra_metadata` 记录 `job_id / session_id / message 范围 / category`，保证可追溯。
 
-- `working` 更偏向“当前工作现场的黑板笔记”；
-- `episodic` 是“这次会议/任务的会议纪要”；
-- `semantic` 是“长期知识库里的条目和用户/项目的稳定设定”。
+- **Profiles 层（画像）的关系**：
+  - Profiles 不再是单独的一套系统，而是构建在 `semantic`/`episodic` 之上的“聚合视图”：
+    - 定期（或按需）收集某个 `user_id`（以及可选 `project_id`）下的高重要度 `semantic` 记忆；
+    - 按 category 聚合为结构化画像 JSON（例如：communication / interest / risk / tools / lifestyle 等字段）；
+    - 保存到单独的 `profiles` 表中，用于推理时注入 system prompt 或作为外部配置；
+    - 当 Profiles 与底层记忆不一致时，以 `memories` 为权威来源，重新聚合。
+  - 这样可以保证：
+    - 日常检索 / RAG 直接使用 `memories`（semantic + episodic）；
+    - 人格画像只是这些记忆的一个上层投影，随记忆演化而不断更新，而不是一套割裂的“平行人格系统”。
+
+### 2.1.4 `tags` 字段的设计原则与自优化
+
+`Memory.tags` 使用 JSONB 存储，用于给记忆打上多个维度的标签，便于筛选和后续 RAG / 画像聚合。建议遵循以下原则：
+
+- **统一格式**：
+  - 全部使用小写、短横线或冒号分隔：如 `"preference"`、`"project:memRagAgent"`、`"type:episodic"`；
+  - 避免在 tag 字符串中混入空格和中文标点。
+
+- **分层命名**：
+  - 主题类：`"preference"`、`"profile"`、`"session_summary"`；
+  - 作用域类：`"project:memRagAgent"`、`"user:u_123"`；
+  - 类型类：`"type:semantic"`、`"type:episodic"`；
+  - 来源类：`"source:auto"`、`"source:manual"`。
+
+- **最小必要集合**：
+  - 每条记忆保持少量高价值标签（1~5 条），避免 tag 爆炸；
+  - 通过 importance / usage 决定是否补充更多细粒度标签。
+
+- **自优化思路**：
+  - 后台任务可以定期根据已有记忆的 `text` / `metadata` 自动补充统一风格的标签：
+    - 例如，对所有 `type='episodic'` 的记忆统一加上 `"type:episodic"`；
+    - 对包含某些关键词（如“偏好”、“喜欢”）的记忆加上 `"preference"`；
+  - 检测到重复或含义接近的标签（如 `"profile"` / `"profiles"`）时，可以统一归一。
+
+- **检索策略配合**：
+  - 当前控制台查询页默认按 `types=['semantic','episodic']` 检索；
+  - 标签筛选框传入的字符串会拆分为数组匹配 `tags`，后端用 `ILIKE` 在 JSONB 串中做简单包含过滤；
+  - 未来可在 RAG 层使用向量 + tag 组合过滤（先按 tag 粗筛，再做相似度搜索）。
+
+通过遵守上述命名和归一原则，可以在不引入复杂索引结构的前提下，逐步让 `tags` 成为“可搜索、可聚合、可解释”的重要维度。
 
 ### 2.2 数据库会话与环境变量
 
@@ -436,14 +483,16 @@ npm run dev
   "has_next": true,
   "has_prev": false
 }
-```
 
-这既适合管理控制台分页，也可以满足后续 Agent / RAG 侧基于 `top_k` 的快速检索需求。
+487→这既适合管理控制台分页，也可以满足后续 Agent / RAG 侧基于 `top_k` 的快速检索需求。
+488→
+489→---
 
----
+### 2.5 上游调用 `/memories/query` 的推荐记忆组合（Cookbook）
 
-## 3. 前端设计与实现
+为了让上游聊天 / Agent / 其他服务更好地利用 Memory Service，这里给出几种常见场景下的“推荐记忆组合”，作为调用 `/memories/query` 的参考范式。
 
+#### 2.5.1 普通对话轮次：提供上下文而不过载
 ### 3.1 HTTP 与 API 抽象层
 
 #### 3.1.1 通用 HTTP 封装 `api/http.ts`
@@ -680,16 +729,23 @@ npm run dev
 > 具体建表 SQL 参考：`backend/memory/db/memory_generation_jobs.sql`
 
 这种设计保证：
-
 - 原始对话、记忆、Job 三个层次职责清晰；
 - Job 表只描述“何时、对谁、对哪一段对话、生成什么类型的记忆”，而不耦合 LLM 细节；
 - 后续扩展 `semantic_extract`、profile 聚合等，只需新增 `job_type` / `target_types` 和对应 worker 逻辑。
 
----
+### 5.4 会话生命周期与重启恢复策略
+在实际接入聊天/Agent 系统时，“当前会话是谁”“这次会话是否已经结束”“重启后还算不算同一个任务”是非常关键但容易混乱的问题。本小节约定 Memory Service 与上游应用在会话生命周期上的分工和最佳实践。
 
-## 6. 未来扩展方向
+#### 5.4.1 职责边界：谁负责划分会话
 
-在当前骨架基础上，后续可以逐步扩展：
+- **上游应用负责管理 `session_id` 与会话状态**：
+  - 创建会话：生成业务侧 `session_id`，在 `conversation_sessions` 中插入一行，`status='active'`；
+  - 继续对话：后续所有消息都带上同一个 `session_id`，落到 `conversation_messages`；
+  - 显式结束：用户点击“结束对话”或业务逻辑判定任务完成时，将 `conversation_sessions.status` 置为 `closed` 并写入 `closed_at`；
+  - 非显式结束（超时）：后台任务可以按配置（例如 30 分钟 / 2 小时无消息）自动将长时间未活跃的会话标记为 `closed`。
+- **Memory Service 不自行“猜测当前会话”**：
+  - 所有接口都依赖上游传入的 `session_id`；
+  - 是否拆分为多个会话（如换页面、换任务）由业务侧决定。
 
 1. **RAG 服务对接**
    - 在 `backend/rag` 下实现 RAG 路由与检索逻辑。

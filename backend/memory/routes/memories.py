@@ -4,8 +4,8 @@ from sqlalchemy.dialects.postgresql import TEXT
 from sqlalchemy.orm import Session
 
 from repository.db_session import SessionLocal
-from models.memory import Memory, MemoryGenerationJob
-from llm_client import generate_episodic_summary
+from models.memory import Memory, MemoryGenerationJob, ConversationMessage
+from llm_client import generate_episodic_summary, generate_semantic_memories
 
 memories_bp = Blueprint("memories", __name__)
 
@@ -174,6 +174,7 @@ def run_job(job_id: int):
     db: Session = SessionLocal()
     try:
         job = db.query(MemoryGenerationJob).filter(MemoryGenerationJob.id == job_id).first()
+
         if not job:
             return jsonify({"error": "job not found"}), 404
 
@@ -186,54 +187,190 @@ def run_job(job_id: int):
         db.refresh(job)
 
         try:
-            summary_text = generate_episodic_summary(
-                session_id=job.session_id,
-                start_message_id=job.start_message_id,
-                end_message_id=job.end_message_id,
+            # 读取该会话中指定范围内的消息，构造对话文本
+            msg_query = db.query(ConversationMessage).filter(
+                ConversationMessage.session_id == job.session_id
             )
+            if job.start_message_id is not None:
+                msg_query = msg_query.filter(ConversationMessage.id >= job.start_message_id)
+            if job.end_message_id is not None:
+                msg_query = msg_query.filter(ConversationMessage.id <= job.end_message_id)
 
-            mem = Memory(
-                user_id=job.user_id,
-                agent_id=job.agent_id,
-                project_id=job.project_id,
-                type="episodic",
-                source="auto_session_summary",
-                text=summary_text,
-                importance=0.7,
-                tags=["session_summary"],
-                extra_metadata={
-                    "job_id": job.id,
-                    "session_id": job.session_id,
-                    "start_message_id": job.start_message_id,
-                    "end_message_id": job.end_message_id,
-                },
-            )
+            msg_query = msg_query.order_by(ConversationMessage.id.asc()).limit(50)
+            msgs = msg_query.all()
 
-            db.add(mem)
-            job.status = "done"
-            job.error_message = None
-            db.commit()
-            db.refresh(job)
-            db.refresh(mem)
+            if msgs:
+                conversation_lines = [
+                    f"{m.role}: {m.content}" for m in msgs
+                ]
+                conversation_text = "\n".join(conversation_lines)
+            else:
+                conversation_text = "(当前未能找到对应的对话消息，仅根据会话 ID 生成总结/抽取 semantic。)"
 
-            return jsonify(
-                {
-                    "job": {
-                        "id": job.id,
-                        "status": job.status,
-                        "updated_at": job.updated_at.isoformat(),
+            if job.job_type == "episodic_summary":
+                summary_text = generate_episodic_summary(
+                    session_id=job.session_id,
+                    conversation_text=conversation_text,
+                )
+
+                mem = Memory(
+                    user_id=job.user_id,
+                    agent_id=job.agent_id,
+                    project_id=job.project_id,
+                    type="episodic",
+                    source="auto_session_summary",
+                    text=summary_text,
+                    importance=0.7,
+                    tags=["session_summary"],
+                    extra_metadata={
+                        "job_id": job.id,
+                        "session_id": job.session_id,
+                        "start_message_id": job.start_message_id,
+                        "end_message_id": job.end_message_id,
                     },
-                    "memory": {
-                        "id": mem.id,
-                        "type": mem.type,
-                        "source": mem.source,
-                        "text": mem.text,
-                        "importance": mem.importance,
-                        "tags": mem.tags,
-                        "metadata": mem.extra_metadata,
+                )
+
+                db.add(mem)
+                db.flush()
+
+                working_snapshot = Memory(
+                    user_id=job.user_id,
+                    agent_id=job.agent_id,
+                    project_id=job.project_id,
+                    type="working",
+                    source="auto_session_working_state",
+                    text=(
+                        "会话已生成一条 episodic 总结，用于后续快速回顾本次会话的主要内容。"
+                    ),
+                    importance=0.3,
+                    tags=[
+                        "working:task_state",
+                        "session:episodic_generated",
+                        "project:memRagAgent",
+                    ],
+                    extra_metadata={
+                        "job_id": job.id,
+                        "session_id": job.session_id,
+                        "episodic_memory_id": mem.id,
+                        "start_message_id": job.start_message_id,
+                        "end_message_id": job.end_message_id,
                     },
-                }
-            )
+                )
+
+                db.add(working_snapshot)
+
+                job.status = "done"
+                job.error_message = None
+                db.commit()
+                db.refresh(job)
+                db.refresh(mem)
+                db.refresh(working_snapshot)
+
+                return jsonify(
+                    {
+                        "job": {
+                            "id": job.id,
+                            "status": job.status,
+                            "updated_at": job.updated_at.isoformat(),
+                        },
+                        "memory": {
+                            "id": mem.id,
+                            "type": mem.type,
+                            "source": mem.source,
+                            "text": mem.text,
+                            "importance": mem.importance,
+                            "tags": mem.tags,
+                            "metadata": mem.extra_metadata,
+                        },
+                        "working_memory": {
+                            "id": working_snapshot.id,
+                            "type": working_snapshot.type,
+                            "source": working_snapshot.source,
+                            "text": working_snapshot.text,
+                            "importance": working_snapshot.importance,
+                            "tags": working_snapshot.tags,
+                            "metadata": working_snapshot.extra_metadata,
+                        },
+                    }
+                )
+
+            elif job.job_type == "semantic_extract":
+                semantic_items = generate_semantic_memories(
+                    session_id=job.session_id,
+                    conversation_text=conversation_text,
+                )
+
+                created_ids = []
+                for item in semantic_items:
+                    text = item.get("text")
+                    if not text:
+                        continue
+                    category = item.get("category")
+                    tags = item.get("tags") or []
+                    if isinstance(tags, str):
+                        tags = [tags]
+
+                    base_tags = ["semantic_auto"]
+                    if category:
+                        base_tags.append(f"category:{category}")
+
+                    all_tags = list(base_tags)
+                    for t in tags:
+                        if t and t not in all_tags:
+                            all_tags.append(t)
+
+                    mem = Memory(
+                        user_id=job.user_id,
+                        agent_id=job.agent_id,
+                        project_id=job.project_id,
+                        type="semantic",
+                        source="auto_semantic_extract",
+                        text=text,
+                        importance=0.8,
+                        tags=all_tags,
+                        extra_metadata={
+                            "job_id": job.id,
+                            "session_id": job.session_id,
+                            "start_message_id": job.start_message_id,
+                            "end_message_id": job.end_message_id,
+                            "category": category,
+                        },
+                    )
+                    db.add(mem)
+                    db.flush()
+                    created_ids.append(mem.id)
+
+                job.status = "done"
+                job.error_message = None
+                db.commit()
+                db.refresh(job)
+
+                return jsonify(
+                    {
+                        "job": {
+                            "id": job.id,
+                            "status": job.status,
+                            "updated_at": job.updated_at.isoformat(),
+                        },
+                        "created_memory_ids": created_ids,
+                    }
+                )
+
+            else:
+                job.status = "failed"
+                job.error_message = f"unsupported job_type: {job.job_type}"
+                db.commit()
+                db.refresh(job)
+                return (
+                    jsonify(
+                        {
+                            "error": "unsupported job type",
+                            "job_type": job.job_type,
+                        }
+                    ),
+                    400,
+                )
+
         except Exception as e:  
             job.status = "failed"
             job.error_message = str(e)

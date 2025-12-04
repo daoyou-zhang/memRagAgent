@@ -35,6 +35,12 @@ export async function createEpisodicJob(
   return http.post<MemoryJob>('/api/memory/jobs/episodic', payload)
 }
 
+export async function createSemanticJob(
+  payload: CreateEpisodicJobPayload,
+): Promise<MemoryJob> {
+  return http.post<MemoryJob>('/api/memory/jobs/semantic', payload)
+}
+
 export async function listJobs(params?: {
   status?: string
   session_id?: string
