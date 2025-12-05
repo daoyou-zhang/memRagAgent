@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import math
+from datetime import datetime, timezone
+
 from flask import Blueprint, jsonify, request
 
 from sqlalchemy.orm import Session
@@ -21,6 +23,33 @@ def _cosine(a: list[float], b: list[float]) -> float:
     if na == 0.0 or nb == 0.0:
         return 0.0
     return dot / (na * nb)
+
+
+def _recency_score(created_at: datetime | None, half_life_days: float = 30.0) -> float:
+    """将 created_at 映射为 0~1 的新鲜度分数，越新越接近 1。
+
+    使用简单的指数衰减：score = exp(-age_days / half_life_days)。
+    若无 created_at，则返回中性值 0.5。
+    """
+
+    if created_at is None:
+        return 0.5
+
+    # 统一按 UTC 处理；若是 naive datetime，直接按当前 UTC 对比即可
+    if created_at.tzinfo is None:
+        created_ts = created_at
+    else:
+        created_ts = created_at.astimezone(timezone.utc).replace(tzinfo=None)
+
+    now = datetime.utcnow()
+    age_days = (now - created_ts).total_seconds() / 86400.0
+    if age_days <= 0:
+        return 1.0
+
+    try:
+        return float(math.exp(-age_days / float(half_life_days)))
+    except Exception:  # noqa: BLE001
+        return 0.5
 
 
 @rag_bp.post("/query")
@@ -72,29 +101,69 @@ def rag_query():
                 vec = [float(x) for x in emb]
             except Exception:
                 continue
-            score = _cosine(q_emb, vec)
+
+            # 第一阶段：向量相似度
+            sim = _cosine(q_emb, vec)
+
+            # 规则加权因子
+            importance = float(mem.importance or 0.0)
+            if importance < 0.0:
+                importance = 0.0
+            if importance > 1.0:
+                importance = 1.0
+
+            recency = _recency_score(mem.created_at)
+
+            # type 轻微偏好：semantic 略高于 episodic
+            type_boost = 1.0
+            if mem.type == "semantic":
+                type_boost = 1.05
+            elif mem.type == "episodic":
+                type_boost = 0.98
+
+            # 最终综合得分：仍然以向量相似度为主，辅以 importance / recency / type
+            final_score = (
+                sim * 0.7
+                + importance * 0.2
+                + recency * 0.1
+            ) * type_boost
+
             candidates.append(
                 {
                     "memory": mem,
-                    "score": float(score),
+                    "similarity": float(sim),
+                    "importance": float(importance),
+                    "recency": float(recency),
+                    "score": float(final_score),
                 }
             )
 
-        # 3) 按相似度排序并截断 top_k
+        # 3) 按综合得分排序并截断 top_k
         candidates.sort(key=lambda x: x["score"], reverse=True)
         top_candidates = candidates[:top_k]
 
         used_context = []
+        total_sim = 0.0
+        total_final = 0.0
         for item in top_candidates:
             mem: Memory = item["memory"]
+            total_sim += float(item.get("similarity", 0.0))
+            total_final += float(item.get("score", 0.0))
             used_context.append(
                 {
                     "type": "memory",
                     "id": f"mem:{mem.id}",
                     "text": mem.text,
-                    "score": item["score"],
+                    "score": item["score"],  # 综合得分
+                    "similarity": item.get("similarity", 0.0),
+                    "importance": item.get("importance", 0.0),
+                    "recency": item.get("recency", 0.0),
+                    "memory_type": mem.type,
                 }
             )
+
+        avg_sim = total_sim / len(top_candidates) if top_candidates else 0.0
+        avg_final = total_final / len(top_candidates) if top_candidates else 0.0
 
         return jsonify(
             {
@@ -103,6 +172,8 @@ def rag_query():
                 "debug_info": {
                     "total_candidates": len(candidates),
                     "top_k": top_k,
+                    "avg_similarity_top_k": avg_sim,
+                    "avg_score_top_k": avg_final,
                 },
             }
         )

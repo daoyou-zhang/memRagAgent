@@ -6,6 +6,229 @@
 
 ---
 
+## 调用速查（How to call）
+
+这一节给出最常用调用路径的速查示例，便于在代码或 Postman/curl 中直接套用。
+
+- **写入一条记忆**（手动植入 semantic/episodic）：
+
+  ```bash
+  curl -X POST http://localhost:5000/api/memory/memories \
+    -H "Content-Type: application/json" \
+    -d '{
+      "user_id": "u_123",
+      "project_id": "proj_memRagAgent",
+      "type": "semantic",
+      "source": "manual",
+      "text": "用户偏好：回答时先给结论再解释。",
+      "importance": 0.8,
+      "tags": ["preference", "communication"]
+    }'
+  ```
+
+- **按用户/项目查询记忆**（结构化 + ILIKE）：
+
+  ```bash
+  curl -X POST http://localhost:5000/api/memory/memories/query \
+    -H "Content-Type: application/json" \
+    -d '{
+      "user_id": "u_123",
+      "project_id": "proj_memRagAgent",
+      "query": "命名 规范",
+      "page": 1,
+      "page_size": 10,
+      "filters": {"types": ["semantic"], "min_importance": 0.5}
+    }'
+  ```
+
+- **手动创建 Job**（episodic / semantic / profile）：
+
+  ```bash
+  # episodic_summary
+  curl -X POST http://localhost:5000/api/memory/jobs/episodic \
+    -H "Content-Type: application/json" \
+    -d '{
+      "user_id": "u_123",
+      "project_id": "proj_memRagAgent",
+      "session_id": "sess_001"
+    }'
+
+  # semantic_extract
+  curl -X POST http://localhost:5000/api/memory/jobs/semantic \
+    -H "Content-Type: application/json" \
+    -d '{
+      "user_id": "u_123",
+      "project_id": "proj_memRagAgent",
+      "session_id": "sess_001"
+    }'
+
+  # profile_aggregate
+  curl -X POST http://localhost:5000/api/memory/jobs/profile \
+    -H "Content-Type: application/json" \
+    -d '{
+      "user_id": "u_123",
+      "project_id": "proj_memRagAgent"
+    }'
+  ```
+
+- **查看 & 执行 Job**：
+
+  ```bash
+  # 列出所有 pending Job
+  curl "http://localhost:5000/api/memory/jobs?status=pending"
+
+  # 执行单个 Job（会真正写入 Memory / Profile + embedding）
+  curl -X POST http://localhost:5000/api/memory/jobs/123/run
+  ```
+
+- **关闭会话并按 auto_* + 消息阈值自动创建 Job**：
+
+  ```bash
+  curl -X POST http://localhost:5000/api/memory/sessions/sess_001/close \
+    -H "Content-Type: application/json" \
+    -d '{}'  # 无需额外字段，开关在 conversation_sessions 表中
+  ```
+
+- **基于 semantic 增量自动创建画像 Job**：
+
+  ```bash
+  curl -X POST http://localhost:5000/api/memory/jobs/profile/auto \
+    -H "Content-Type: application/json" \
+    -d '{
+      "user_id": "u_123",
+      "project_id": "proj_memRagAgent",
+      "min_new_semantic": 5
+    }'
+  ```
+
+- **Memory-RAG 查询（仅召回，不直接回答）**：
+
+  ```bash
+  curl -X POST http://localhost:5000/api/rag/query \
+    -H "Content-Type: application/json" \
+    -d '{
+      "user_id": "u_123",
+      "project_id": "proj_memRagAgent",
+      "query": "上次讨论的画像设计原则是什么？",
+      "top_k": 8
+    }'
+  ```
+
+---
+
+## 4. Memory-RAG 设计与调用最佳实践（MVP）
+
+本节描述当前版本的 Memory-RAG 能力（基于向量召回 + 记忆），以及上游使用 `/api/rag/query` 时的推荐模式。
+
+### 4.1 后端接口 `/api/rag/query`（MVP）
+
+- 路由：`POST /api/rag/query`
+- 请求体（MVP 版本）：
+
+  ```jsonc
+  {
+    "user_id": "u_123",           // 可选，限定用户
+    "project_id": "proj_x",      // 可选，限定项目
+    "query": "用户的自然语言问题",
+    "top_k": 8                    // 返回前多少条最相似记忆
+  }
+  ```
+
+- 核心流程：
+
+  1. 使用 `embeddings_client.generate_embedding(query)` 生成查询向量；
+  2. 从 `memory_embeddings` + `memories` 中筛选同一 `user_id`/`project_id` 下、`type in ('semantic','episodic')` 的记忆；
+  3. 在 Python 中计算查询向量与各记忆向量的余弦相似度；
+  4. 按相似度降序排序，取前 `top_k` 条作为检索结果；
+  5. 返回结构大致为：
+
+     ```jsonc
+     {
+       "used_context": [
+         {
+           "memory": { /* Memory 字段 */ },
+           "score": 0.87
+         }
+       ]
+       // MVP 暂不生成最终回答，仅负责召回
+     }
+     ```
+
+### 4.2 `/memories/query` vs `/rag/query` 的分工
+
+- `/memories/query`：
+  - 优点：
+    - 支持丰富的结构化过滤：`types` / `min_importance` / `tags` / 分页；
+    - 查询成本低（纯 SQL + ILIKE）；
+  - 适用：
+    - 管理控制台；
+    - 需要“按标签/类型筛选”的场景；
+    - 对语义模糊匹配要求不高的普通上下文注入。
+
+- `/rag/query`：
+  - 优点：
+    - 使用向量做“语义相似度”检索，更适合自然语言问题；
+  - 适用：
+    - 用户提问题难以用简单关键词精准表示时；
+    - 希望根据“语义相近”找出相关记忆片段。
+
+**推荐组合策略（上游）：**
+
+- 若场景偏“管理/运营”，优先用 `/memories/query`；
+- 若场景偏“问答/RAG”，优先用 `/rag/query`，必要时在调用前后辅以 `/memories/query` 做：
+  - 预过滤（例如先按 `tags` 限定范围，再在这些记忆上建向量索引——后续可优化）；
+  - 或回溯（例如根据 RAG 命中的记忆，再查更多同类记忆作解释）。
+
+### 4.3 上游构造 RAG Prompt 的基本模板
+
+MVP 建议由上游 Agent 负责最终回答生成，Memory Service 只负责召回 `used_context`。一个典型调用模板：
+
+```pseudo
+def answer_with_memory(user_id, project_id, query, recent_dialogue):
+  # 1) 先查向量 RAG
+  rag_resp = POST /api/rag/query {
+    user_id,
+    project_id,
+    query,
+    top_k: 8
+  }
+
+  memories = rag_resp.used_context  # list of {memory, score}
+
+  # 2) 组合 Prompt
+  prompt = build_llm_prompt(
+    system_profile = GET /api/profiles/<user_id> (optional),
+    recent_dialogue = recent_dialogue,
+    long_term_memories = memories
+  )
+
+  # 3) 调用 LLM 生成最终回答
+  return call_llm(prompt)
+```
+
+关键点：
+
+- **Profiles** 用于给 LLM 一个“高层人物画像”；
+- `/rag/query` 提供语义相关的具体记忆片段；
+- `recent_dialogue` 提供最近上下文；
+- 上游自己负责如何在 Prompt 中摆放三者的顺序与权重，Memory Service 不强行约束。
+
+### 4.4 后续可演进方向（留白）
+
+当前 RAG 仅实现“向量召回”。未来可以在本节基础上扩展：
+
+- 在后端对 `used_context` 做二次 rerank：
+  - 引入 importance / recency / tag 匹配度等多因素打分；
+  - 支持按类型分桶（semantic/episodic）后各取 top_k，再合并；
+- 在 `/api/rag/query` 中直接增加 `answer` 字段：
+  - 由后端调用 LLM，根据 `used_context` 生成最终回答；
+- 支持外部知识源（文档 RAG）与记忆 RAG 的混合：
+  - 例如：文档向量库 + Memory 向量库；
+  - 上游可以指定检索策略（只查记忆 / 只查文档 / 混合）。
+
+这些扩展在代码与文档层面都预留了空间，但不会影响当前 MVP 的使用方式。
+
+
 ## 0. 环境准备与搭建步骤（从零到可用控制台）
 
 这一节按时间顺序记录“如何从空目录一步步搭建到现在这套记忆控制台”，方便复现或给新人参考。
@@ -735,7 +958,143 @@ flowchart TD
 
 为了让上游聊天 / Agent / 其他服务更好地利用 Memory Service，这里给出几种常见场景下的“推荐记忆组合”，作为调用 `/memories/query` 的参考范式。
 
+这部分主要解决两个问题：
+
+- **什么时候查记忆？查哪几类？**
+- **如何在“效果”与“成本（延迟/Token）”间做取舍？**
+
+下面按典型场景给出推荐调用模式。
+
 #### 2.5.1 普通对话轮次：提供上下文而不过载
+
+**场景**：用户正在与 Agent 多轮对话，需要适度注入长期记忆，让回答有“延续性”，但不能每轮都拉特别多历史，导致过载。
+
+**推荐策略**：只拉少量高重要度 `semantic` + 最近少量 `episodic`。
+
+伪代码流程（上游服务视角）：
+
+```pseudo
+on_new_message(user_id, project_id, session_id, last_k_messages):
+  # 1) 先在自身会话存储中拿最近几轮对话（非 Memory Service 范畴）
+  recent_dialogue = last_k_messages
+
+  # 2) 再向 Memory Service 请求长期记忆
+  mems = POST /api/memory/memories/query {
+    user_id,
+    project_id,
+    query: optional_query_from_user_or_task,
+    page: 1,
+    page_size: 5,
+    filters: {
+      types: ["semantic", "episodic"],
+      min_importance: 0.6
+    }
+  }
+
+  # 3) 将 recent_dialogue + mems.items 作为辅助上下文，构造 Prompt
+  prompt = build_prompt(recent_dialogue, mems.items)
+  answer = call_llm(prompt)
+```
+
+说明：
+
+- 若只是一般问答，不需要强相关查询，`query` 可以留空，仅按 `importance` + `created_at` 排序取前几条。
+- 若问题本身带明显 query 词（如“上次我们讨论的 profile 设计…”），可以把这句直接放进 `query`，让后端做 `ILIKE` 粗筛。
+
+#### 2.5.2 任务型会话：带 query 的“目标检索”
+
+**场景**：用户提出一个明确任务，如“把上次约定的数据库命名规范列出来”，需要从长期事实里尽量精准命中。
+
+**推荐策略**：
+
+- `query` 使用用户请求原文（或抽取后的关键词）；
+- 限制 `types=['semantic']`（任务多是事实/约定）；
+- 结合 `top_k` 控制数量，避免分页带来的额外复杂度。
+
+示例调用：
+
+```jsonc
+POST /api/memory/memories/query
+{
+  "user_id": "u_123",
+  "project_id": "proj_memRagAgent",
+  "query": "数据库 命名 规范",
+  "top_k": 8,
+  "page": 1,
+  "page_size": 8,
+  "filters": {
+    "types": ["semantic"],
+    "min_importance": 0.5
+  }
+}
+```
+
+上游使用方式：
+
+- 将返回的 `items` 按 `score`（当前用 importance）排序，拼成“记忆片段”插入 LLM 提示的 context 区域；
+- 若 `total` 很大，可以只取前 3~5 条，减少干扰。
+
+#### 2.5.3 利用 `session_id` 做“会话级总结”回放
+
+**场景**：需要回顾某次重要会话的结果（例如“昨天晚上的系统重构讨论总结”）。
+
+**推荐策略**：
+
+- 在自动或手动 Job 生成 `episodic` 总结时，把 `session_id` / `job_id` 写入 `tags` 或 `metadata`；
+- 回放时，可以在 `query` 中加入会话关键词，同时按 tag 过滤该会话的总结。
+
+示意调用：
+
+```jsonc
+POST /api/memory/memories/query
+{
+  "user_id": "u_123",
+  "project_id": "proj_memRagAgent",
+  "query": "系统 重构 讨论 总结",
+  "page": 1,
+  "page_size": 3,
+  "filters": {
+    "types": ["episodic"],
+    "tags": ["session:2025-12-04-evening"]
+  }
+}
+```
+
+#### 2.5.4 与 Profiles 的协同：先查画像再查记忆
+
+**场景**：Agent 在新对话开始时，希望对用户有一个整体把握，而不是逐条查 semantic。
+
+**推荐策略**：
+
+1. 先调用 Profiles：
+
+   ```http
+   GET /api/profiles/<user_id>?project_id=...&force_refresh=false
+   ```
+
+2. 再按需调用 `/memories/query`：
+
+   - 若画像已经包含了足够高层信息，可以不额外查记忆；
+   - 若需要底层细节（例如“给出 3 条支撑该画像结论的记忆”），再按 tag 或 category 精细查询 semantic。
+
+好处：
+
+- 画像提供“高层轮廓”，`memories` 提供“可追溯证据”，两者一起给到 LLM，可以做到：
+  - 回答时基于画像的稳定偏好；
+  - 需要解释或 debug 时再展开具体记忆。
+
+#### 2.5.5 成本控制小结
+
+- **优先级**：
+  - 先用 `/memories/query` 这种“结构化 + ILIKE”方式做 cheap 检索；
+  - 需要更强语义匹配时再走向量 RAG（见后续章节）。
+- **数量控制**：
+  - 普通轮次：5 条以内；
+  - 任务回顾：8~10 条以内；
+  - 极少需要一次性拉几十条，除非是后台分析或管理控制台场景。
+
+---
+
 ### 3.1 HTTP 与 API 抽象层
 
 #### 3.1.1 通用 HTTP 封装 `api/http.ts`
@@ -790,17 +1149,6 @@ flowchart TD
   - “Profiles” → `/profiles`
 
 - 布局风格：
-  - 顶部 Header：项目标题 + 导航菜单。
-  - 主体为卡片式 Section，适合控制台场景。
-
----
-
-## 4. 记忆控制台页面拆分：创建 vs 查询
-
-### 4.1 设计原因
-
-最初页面是“创建 + 查询”合在一个页面中，随着功能丰富：
-
 - 创建表单本身字段较多，且还有健康检查信息；
 - 查询部分需要分页、表格展示、将来可能扩展编辑 / 删除 / 打标签等操作；
 
