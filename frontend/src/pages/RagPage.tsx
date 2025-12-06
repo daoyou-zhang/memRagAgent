@@ -32,7 +32,7 @@ function RagPage() {
 
   return (
     <div style={{ padding: '1rem', maxWidth: 900, margin: '0 auto' }}>
-      <h2>RAG Playground</h2>
+      <h2>RAG 检索实验台</h2>
       <form onSubmit={handleSubmit} style={{ display: 'grid', gap: '0.5rem' }}>
         <div>
           <label>
@@ -80,7 +80,7 @@ function RagPage() {
           </label>
         </div>
         <button type="submit" disabled={loading || !query.trim()}>
-          {loading ? 'Querying...' : 'Run RAG Query'}
+          {loading ? '查询中...' : '执行 RAG 检索'}
         </button>
       </form>
 

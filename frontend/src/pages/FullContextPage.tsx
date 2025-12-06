@@ -43,7 +43,7 @@ function FullContextPage() {
 
   return (
     <div style={{ padding: '1rem', maxWidth: 1100, margin: '0 auto' }}>
-      <h2>Full Context Playground</h2>
+      <h2>Full Context 实验台（画像 + 最近对话 + RAG）</h2>
       <form onSubmit={handleSubmit} style={{ display: 'grid', gap: '0.5rem' }}>
         <div>
           <label>
@@ -105,7 +105,7 @@ function FullContextPage() {
           </label>
         </div>
         <button type="submit" disabled={loading || !projectId.trim() || !sessionId.trim()}>
-          {loading ? 'Loading...' : 'Fetch Full Context'}
+          {loading ? '加载中...' : '获取完整上下文'}
         </button>
       </form>
 

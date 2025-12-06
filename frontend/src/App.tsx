@@ -26,10 +26,10 @@ function App() {
           <nav className="app-nav" style={{ display: 'flex', gap: '1rem' }}>
             <Link to="/memories/create">创建记忆</Link>
             <Link to="/memories/query">查询记忆</Link>
-            <Link to="/jobs">Episodic Jobs</Link>
-            <Link to="/rag">RAG</Link>
-            <Link to="/profiles">Profiles</Link>
-            <Link to="/full-context">Full Context</Link>
+            <Link to="/jobs">记忆生成 Job</Link>
+            <Link to="/rag">RAG 检索实验台</Link>
+            <Link to="/profiles">画像查看</Link>
+            <Link to="/full-context">Full Context 实验台</Link>
           </nav>
         </header>
 
