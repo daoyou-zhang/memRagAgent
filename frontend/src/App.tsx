@@ -5,6 +5,7 @@ import MemoryQueryPage from './pages/MemoryQueryPage'
 import RagPage from './pages/RagPage'
 import ProfilesPage from './pages/ProfilesPage'
 import JobsPage from './pages/JobsPage'
+import FullContextPage from './pages/FullContextPage'
 
 function App() {
   return (
@@ -28,6 +29,7 @@ function App() {
             <Link to="/jobs">Episodic Jobs</Link>
             <Link to="/rag">RAG</Link>
             <Link to="/profiles">Profiles</Link>
+            <Link to="/full-context">Full Context</Link>
           </nav>
         </header>
 
@@ -39,6 +41,7 @@ function App() {
             <Route path="/jobs" element={<JobsPage />} />
             <Route path="/rag" element={<RagPage />} />
             <Route path="/profiles" element={<ProfilesPage />} />
+            <Route path="/full-context" element={<FullContextPage />} />
             <Route path="*" element={<div>Not Found</div>} />
           </Routes>
         </main>

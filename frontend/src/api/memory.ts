@@ -75,3 +75,48 @@ export async function queryMemories(
     payload,
   )
 }
+
+export type FullContextPayload = {
+  user_id?: string
+  project_id: string
+  session_id: string
+  query?: string
+  recent_message_limit?: number
+  rag_top_k?: number
+}
+
+export type FullContextWorkingMessage = {
+  id: number
+  role: string
+  content: string
+  created_at?: string | null
+}
+
+export type FullContextRagMemory = {
+  type: string
+  id: string
+  text: string
+  score: number
+  similarity?: number
+  importance?: number
+  recency?: number
+  memory_type?: string
+}
+
+export type FullContextResponse = {
+  profile: unknown | null
+  working_messages: FullContextWorkingMessage[]
+  rag_memories: FullContextRagMemory[]
+  rag_debug: {
+    total_candidates: number
+    top_k: number
+    avg_similarity_top_k: number
+    avg_score_top_k: number
+  }
+}
+
+export async function fetchFullContext(
+  payload: FullContextPayload,
+): Promise<FullContextResponse> {
+  return http.post<FullContextResponse>('/api/memory/context/full', payload)
+}

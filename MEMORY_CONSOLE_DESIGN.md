@@ -114,6 +114,28 @@
     }'
   ```
 
+- **一站式聚合完整记忆上下文（Profile + 最近对话 + RAG 记忆）**：
+
+  ```bash
+  curl -X POST http://localhost:5000/api/memory/context/full \
+    -H "Content-Type: application/json" \
+    -d '{
+      "user_id": "u_123",
+      "project_id": "proj_memRagAgent",
+      "session_id": "sess_001",
+      "query": "当前用户问题，可选",
+      "recent_message_limit": 10,   # 可选；不传则使用 env FULL_CONTEXT_RECENT_MESSAGES
+      "rag_top_k": 5                # 可选；不传则使用 env FULL_CONTEXT_RAG_TOP_K
+    }'
+  ```
+
+  返回值包含：
+
+  - `profile`: 当前 user+project 最新画像（JSON），可能为 null；
+  - `working_messages`: 当前 session 最近 N 条消息；
+  - `rag_memories`: 基于 query 的 semantic/episodic RAG 结果；
+  - `rag_debug`: 一些检索调试信息（候选数、top_k、平均相似度等）。
+
 ---
 
 ## 4. Memory-RAG 设计与调用最佳实践（MVP）
@@ -227,6 +249,30 @@ def answer_with_memory(user_id, project_id, query, recent_dialogue):
   - 上游可以指定检索策略（只查记忆 / 只查文档 / 混合）。
 
 这些扩展在代码与文档层面都预留了空间，但不会影响当前 MVP 的使用方式。
+
+
+### 4.5 一站式 Full Context 聚合接口 `/api/memory/context/full`
+
+为了方便上游编排层直接拿到「画像 + 最近对话 + RAG 记忆」三层信息，本项目提供了一个简单聚合接口：
+
+- 路由：`POST /api/memory/context/full`
+- 输入字段：
+  - `user_id`：可选，限定用户，影响画像与记忆范围；
+  - `project_id`：必填，限定项目；
+  - `session_id`：必填，用于查询最近对话消息；
+  - `query`：可选，若为空则不做 RAG 召回；
+  - `recent_message_limit`：可选，最近对话条数；不传则使用 env `FULL_CONTEXT_RECENT_MESSAGES`；
+  - `rag_top_k`：可选，RAG 召回条数；不传则使用 env `FULL_CONTEXT_RAG_TOP_K`。
+- 返回字段：
+  - `profile`：当前 user+project 最新画像 JSON，可能为 `null`；
+  - `working_messages`：当前 session 最近 N 条消息，按时间升序；
+  - `rag_memories`：基于 `query` 的 semantic/episodic 记忆列表，包含 `score/similarity/importance` 等打分信息；
+  - `rag_debug`：候选数量、top_k、平均相似度/得分等调试信息。
+
+这个接口**不调用 LLM**，只负责在内聚合和打分，适合：
+
+- 上游对话/编排服务每轮调用一次，拿到完整上下文后自行拼装 LLM Prompt；
+- 在控制台前端中调试「三层记忆的联合效果」，例如 Full Context Playground 页面。
 
 
 ## 0. 环境准备与搭建步骤（从零到可用控制台）
@@ -621,6 +667,59 @@ npm run dev
 ```
 
 实现时可以将该 JSON 直接存入一个 `profiles` 表的 `profile_json` 字段中，或完全不建表，仅在需要时现算（代价更高）。
+
+#### 2.1.3.2.1 用户亲密画像六维 Schema（用于 semantic & Profile 聚合）
+
+为了让画像不仅停留在“基本信息”，而是更像“长期了解的一位伴侣/搭档”，本项目约定一套六维用户亲密画像 Schema。semantic 抽取与 Profile 聚合都会围绕这些维度填充事实。
+
+- **1）身份与背景 `identity_profile`**  
+  例：职业/角色、年龄段（可模糊）、常驻城市/时区、技术背景。
+
+- **2）情感状态与关系 `emotional_state_and_relations`**  
+  例：近期整体情绪趋势（紧张/平稳/疲惫）、在分歧时是否偏冷静讨论、与长期协作对象的大致关系模式（如长期 pair programming 搭档）。
+
+- **3）交流与陪伴偏好 `communication_and_companionship`**  
+  例：
+  - 是否希望“先给结论再解释”；
+  - 能接受的批判强度（是否希望直接指出问题 vs 委婉提醒）；
+  - 更希望助手是“工具型 / 朋友型 / 教练型”；
+  - 在压力大时，希望先得到共情还是先得到解决方案。
+
+- **4）生活习惯与兴趣 `lifestyle_and_habits`**  
+  例：大致作息（夜猫子/早睡型）、生活小习惯、兴趣话题：
+  - 如“对量子物理长期感兴趣，喜欢从原理层面理解问题”；
+  - “经常使用物理/系统架构类比来理解抽象概念”；
+  对应 tags 可为：`profile:interest`、`interest:physics:quantum` 等。
+
+- **5）工作与学习风格 `work_and_learning_style`**  
+  例：
+  - 偏好自上而下规划 vs 边干边摸索；
+  - 喜欢多方案比较还是单一方案直接执行；
+  - 学习新知识时偏好“先原理再例子”，或“先例子再抽象”；
+  - 典型组合如：“理性批判 + 实用主义 + 合作性”：
+    - 接受批判性反馈，但希望最终收敛到可执行方案。
+
+- **6）边界与价值观 `boundaries_and_values`**  
+  例：
+  - 明确不希望讨论的领域（隐私/政治/某段经历）；
+  - 对诚实/实话实说的期待程度；
+  - 对“鸡汤式安慰” vs “现实提醒”偏好；
+  - 在效率 vs 稳健之间的大致位置。
+
+semantic 抽取 Job 应尽量将对话中的稳定结论映射为这些维度下的一句话事实，并配上统一风格的 tags；Profile 聚合 Job 则负责把这些碎片化事实汇总为结构化 JSON 字段，必要时组合成更高层的描述，例如：
+
+```jsonc
+"thinking_and_values": {
+  "style": "理性批判 + 实用主义",
+  "description": "用户在技术和决策问题上强调逻辑自洽和实用价值，愿意接受批判性意见，但期望这些意见指向可执行的改进方案。",
+  "cooperation": "在合作中倾向讨论和质疑，但目标是找到双方都能接受且可落地的折中方案。"
+}
+```
+
+这样可以保证：
+
+- semantic 层记录的是**可以直接使用的事实句子**（而不是泛泛的“用户提到过 X”）；
+- Profile 层在此基础上生成“高层人格/偏好”的摘要视图，方便上游注入 system prompt 或作为配置使用。
 
 #### 2.1.3.3 画像聚合 Job 设计
 

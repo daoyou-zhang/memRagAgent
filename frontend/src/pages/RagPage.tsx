@@ -5,6 +5,7 @@ function RagPage() {
   const [projectId, setProjectId] = useState('DAOYOUTEST')
   const [userId, setUserId] = useState('48eedcd8-ed89-464c-8109-7bcb6fe94e36')
   const [query, setQuery] = useState('')
+  const [topK, setTopK] = useState(8)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<RagQueryResponse | null>(null)
@@ -19,6 +20,7 @@ function RagPage() {
         project_id: projectId,
         user_id: userId || undefined,
         query,
+        top_k: topK || undefined,
       })
       setResult(data)
     } catch (err) {
@@ -62,6 +64,21 @@ function RagPage() {
             />
           </label>
         </div>
+        <div>
+          <label>
+            top_k:{' '}
+            <input
+              type="number"
+              min={1}
+              max={50}
+              value={topK}
+              onChange={(e) =>
+                setTopK(Number.isNaN(Number(e.target.value)) ? 0 : Number(e.target.value))
+              }
+              style={{ width: '5rem' }}
+            />
+          </label>
+        </div>
         <button type="submit" disabled={loading || !query.trim()}>
           {loading ? 'Querying...' : 'Run RAG Query'}
         </button>
@@ -76,13 +93,42 @@ function RagPage() {
           {result.used_context && (
             <>
               <h4>Used Context</h4>
-              <ul>
-                {result.used_context.map((c) => (
-                  <li key={c.type + ':' + c.id}>
-                    <strong>[{c.type}]</strong> {c.text} (score: {c.score})
-                  </li>
-                ))}
-              </ul>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr>
+                    <th style={{ borderBottom: '1px solid #ccc', textAlign: 'left' }}>#</th>
+                    <th style={{ borderBottom: '1px solid #ccc', textAlign: 'left' }}>Type</th>
+                    <th style={{ borderBottom: '1px solid #ccc', textAlign: 'left' }}>Score</th>
+                    <th style={{ borderBottom: '1px solid #ccc', textAlign: 'left' }}>Sim</th>
+                    <th style={{ borderBottom: '1px solid #ccc', textAlign: 'left' }}>Imp</th>
+                    <th style={{ borderBottom: '1px solid #ccc', textAlign: 'left' }}>Recency</th>
+                    <th style={{ borderBottom: '1px solid #ccc', textAlign: 'left' }}>Text</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {result.used_context.map((c, idx) => (
+                    <tr key={c.type + ':' + c.id}>
+                      <td style={{ verticalAlign: 'top', padding: '0.25rem 0.5rem' }}>{idx + 1}</td>
+                      <td style={{ verticalAlign: 'top', padding: '0.25rem 0.5rem' }}>
+                        {c.memory_type || c.type}
+                      </td>
+                      <td style={{ verticalAlign: 'top', padding: '0.25rem 0.5rem' }}>
+                        {c.score.toFixed(3)}
+                      </td>
+                      <td style={{ verticalAlign: 'top', padding: '0.25rem 0.5rem' }}>
+                        {c.similarity !== undefined ? c.similarity.toFixed(3) : '-'}
+                      </td>
+                      <td style={{ verticalAlign: 'top', padding: '0.25rem 0.5rem' }}>
+                        {c.importance !== undefined ? c.importance.toFixed(3) : '-'}
+                      </td>
+                      <td style={{ verticalAlign: 'top', padding: '0.25rem 0.5rem' }}>
+                        {c.recency !== undefined ? c.recency.toFixed(3) : '-'}
+                      </td>
+                      <td style={{ verticalAlign: 'top', padding: '0.25rem 0.5rem' }}>{c.text}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </>
           )}
         </div>

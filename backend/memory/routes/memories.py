@@ -22,8 +22,22 @@ from llm_client import (
 from embeddings_client import generate_embedding
 
 import os
+import math
+
+
+def _cosine(a: list[float], b: list[float]) -> float:
+    if not a or not b or len(a) != len(b):
+        return 0.0
+    dot = sum(x * y for x, y in zip(a, b))
+    na = math.sqrt(sum(x * x for x in a))
+    nb = math.sqrt(sum(y * y for y in b))
+    if na == 0.0 or nb == 0.0:
+        return 0.0
+    return dot / (na * nb)
+
 
 memories_bp = Blueprint("memories", __name__)
+
 
 @memories_bp.post("/memories")
 def create_memory():
@@ -83,6 +97,171 @@ def create_memory():
                 }
             ),
             201,
+        )
+    finally:
+        db.close()
+
+
+@memories_bp.post("/context/full")
+def get_full_context():
+    payload = request.get_json(force=True) or {}
+
+    user_id = payload.get("user_id")
+    project_id = payload.get("project_id")
+    session_id = payload.get("session_id")
+    query_text = payload.get("query") or ""
+
+    if not project_id:
+        return jsonify({"error": "field 'project_id' is required"}), 400
+    if not session_id:
+        return jsonify({"error": "field 'session_id' is required"}), 400
+
+    try:
+        default_recent = int(os.getenv("FULL_CONTEXT_RECENT_MESSAGES", "20"))
+    except (TypeError, ValueError):
+        default_recent = 20
+    try:
+        default_top_k = int(os.getenv("FULL_CONTEXT_RAG_TOP_K", "8"))
+    except (TypeError, ValueError):
+        default_top_k = 8
+
+    try:
+        recent_limit = int(payload.get("recent_message_limit", default_recent))
+    except (TypeError, ValueError):
+        recent_limit = default_recent
+    try:
+        rag_top_k = int(payload.get("rag_top_k", default_top_k))
+    except (TypeError, ValueError):
+        rag_top_k = default_top_k
+
+    db: Session = SessionLocal()
+    try:
+        # 1) Profile：当前 user+project 的最新画像（如无则为 None）
+        profile_json = None
+        if user_id:
+            prof_q = db.query(Profile).filter(Profile.user_id == user_id)
+            prof_q = prof_q.filter(Profile.project_id == project_id)
+            profile = prof_q.order_by(Profile.updated_at.desc()).first()
+            if profile is not None:
+                profile_json = profile.profile_json
+
+        # 2) Working memory：该 session 最近 N 条消息（按时间升序返回）
+        msgs_q = (
+            db.query(ConversationMessage)
+            .filter(ConversationMessage.session_id == session_id)
+            .order_by(ConversationMessage.id.desc())
+        )
+        if recent_limit > 0:
+            msgs_q = msgs_q.limit(recent_limit)
+        raw_msgs = list(reversed(msgs_q.all()))
+
+        working_messages = []
+        for m in raw_msgs:
+            working_messages.append(
+                {
+                    "id": m.id,
+                    "role": m.role,
+                    "content": m.content,
+                    "created_at": m.created_at.isoformat() if m.created_at else None,
+                }
+            )
+
+        # 3) RAG：基于 query_text（如有）检索 semantic/episodic 记忆
+        rag_memories: list[dict] = []
+        rag_debug = {
+            "total_candidates": 0,
+            "top_k": rag_top_k,
+            "avg_similarity_top_k": 0.0,
+            "avg_score_top_k": 0.0,
+        }
+
+        if query_text.strip():
+            try:
+                q_emb = generate_embedding(query_text)
+            except Exception as e:  # noqa: BLE001
+                return (
+                    jsonify(
+                        {
+                            "error": "failed to generate embedding",
+                            "detail": str(e),
+                        }
+                    ),
+                    500,
+                )
+
+            q = db.query(Memory, MemoryEmbedding).join(
+                MemoryEmbedding, MemoryEmbedding.memory_id == Memory.id
+            )
+            q = q.filter(Memory.project_id == project_id)
+            if user_id:
+                q = q.filter(Memory.user_id == user_id)
+            q = q.filter(Memory.type.in_(["semantic", "episodic"]))
+
+            candidates: list[dict] = []
+            for mem, emb_row in q.all():
+                emb = emb_row.embedding or []
+                try:
+                    vec = [float(x) for x in emb]
+                except Exception:
+                    continue
+
+                sim = _cosine(q_emb, vec)
+
+                importance = float(mem.importance or 0.0)
+                if importance < 0.0:
+                    importance = 0.0
+                if importance > 1.0:
+                    importance = 1.0
+
+                # 这里不引入时间依赖的新鲜度，保持简单：仅用相似度 + importance
+                final_score = sim * 0.8 + importance * 0.2
+
+                candidates.append(
+                    {
+                        "memory": mem,
+                        "similarity": float(sim),
+                        "importance": float(importance),
+                        "score": float(final_score),
+                    }
+                )
+
+            candidates.sort(key=lambda x: x["score"], reverse=True)
+            top_candidates = candidates[:rag_top_k]
+
+            total_sim = 0.0
+            total_final = 0.0
+            for item in top_candidates:
+                mem = item["memory"]
+                total_sim += float(item.get("similarity", 0.0))
+                total_final += float(item.get("score", 0.0))
+                rag_memories.append(
+                    {
+                        "type": "memory",
+                        "id": f"mem:{mem.id}",
+                        "text": mem.text,
+                        "score": item["score"],
+                        "similarity": item.get("similarity", 0.0),
+                        "importance": item.get("importance", 0.0),
+                        "recency": None,
+                        "memory_type": mem.type,
+                    }
+                )
+
+            rag_debug["total_candidates"] = len(candidates)
+            rag_debug["avg_similarity_top_k"] = (
+                total_sim / len(top_candidates) if top_candidates else 0.0
+            )
+            rag_debug["avg_score_top_k"] = (
+                total_final / len(top_candidates) if top_candidates else 0.0
+            )
+
+        return jsonify(
+            {
+                "profile": profile_json,
+                "working_messages": working_messages,
+                "rag_memories": rag_memories,
+                "rag_debug": rag_debug,
+            }
         )
     finally:
         db.close()
