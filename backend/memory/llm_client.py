@@ -129,15 +129,19 @@ def generate_semantic_memories(
 
     system_prompt = (
         "你是一个用户画像和长期记忆抽取助手，负责从对话中提取可以长期保存的事实和偏好 "
-        "(semantic memory)。这些信息将用于后续的人格画像和检索。\n\n"
-        "请优先关注以下几个维度：\n"
-        "- 沟通与表达偏好（语言、回答风格、细节程度、展示形式等）；\n"
-        "- 知识与兴趣领域（工作/专业领域、长期关注的话题、兴趣爱好等）；\n"
-        "- 决策与风险偏好（保守/激进、是否喜欢多方案选择等）；\n"
-        "- 交互风格（是否喜欢系统提问澄清、是否接受直接指出问题等）；\n"
-        "- 常用工具或工作/学习方式（如果对话中有体现）。\n\n"
+        "(semantic memory)。这些信息将用于后续的亲密画像和检索。\n\n"
+        "请优先围绕以下六个维度提取 *结论型的一句话*：\n"
+        "1) 身份与背景 identity_profile：职业/角色、技术背景、年龄段、常驻城市/时区等；\n"
+        "2) 情感状态与关系 emotional_state_and_relations：长期情绪趋势、在分歧中的处理方式、与重要协作对象的大致关系模式；\n"
+        "3) 交流与陪伴偏好 communication_and_companionship：语言偏好、回答风格（是否先给结论）、能接受的批判强度、希望助手更像工具/朋友/教练等；\n"
+        "4) 生活习惯与兴趣 lifestyle_and_habits：作息、日常习惯、兴趣爱好（例如对量子物理特别感兴趣）、在生活决策中是否偏理性；\n"
+        "5) 工作与学习风格 work_and_learning_style：是否理性批判、是否偏实用主义、合作风格（愿意讨论但最终要可执行）、学习方式（先原理/先例子等）；\n"
+        "6) 边界与价值观 boundaries_and_values：不希望讨论的领域、对诚实/现实提醒的期待、在效率 vs 稳健之间的大致取向。\n\n"
         "输出时请使用 JSON 数组格式，每个元素是一个对象，形如：\n"
-        "{\"text\": \"一句话结论\", \"category\": \"communication\", \"tags\": [\"preference\", \"communication\"]}。\n"
+        "{\"text\": \"一句话结论\", \"category\": \"communication_and_companionship\", \"tags\": [\"profile:comm_style\", \"preference\"]}。\n"
+        "- text：一句话结论，尽量具体且可直接用于后续推理；\n"
+        "- category：上述六个维度之一的标识（如 identity_profile / lifestyle_and_habits 等）；\n"
+        "- tags：包含至少一个 profile:* 或 interest:* 等标签，用于后续聚合（例如 profile:interest, interest:physics:quantum）。\n"
         "如果对话信息不足，可以返回空数组 []。不要编造与对话无关的内容。"
     )
 
@@ -188,6 +192,8 @@ def generate_profile_from_semantics(
             "tools_and_habits": [],
             "social_relations": [],
             "project_facts": {},
+            "lifestyle_and_habits": [],
+            "thinking_and_values": {},
         }
 
     # 为避免 prompt 过长，仅截取前若干条（importance 已在上游排序）
@@ -201,11 +207,13 @@ def generate_profile_from_semantics(
         "- user_id: 字符串\n"
         "- project_id: 字符串或 null\n"
         "- communication_style: 对象，描述语气、语言、回答风格等（用中文描述）\n"
-        "- interests: 字符串数组，描述长期兴趣与关注点（数组元素用中文）\n"
+        "- interests: 字符串数组，描述长期兴趣与关注点（数组元素用中文，例如“量子物理”“Agent 架构设计”）\n"
         "- risk_preference: 字符串，描述大致决策/风险偏好（用中文）\n"
         "- tools_and_habits: 字符串数组，描述常用工具、工作/学习习惯（用中文）\n"
         "- social_relations: 字符串数组，描述重要的人物关系或协作模式（用中文）\n"
-        "- project_facts: 对象，key 为项目 ID，value 为该项目的关键信息（如技术栈、设计原则等，内容用中文）。\n"
+        "- project_facts: 对象，key 为项目 ID，value 为该项目的关键信息（如技术栈、设计原则等，内容用中文）\n"
+        "- lifestyle_and_habits: 字符串数组，描述作息、生活习惯和生活领域的兴趣点（用中文）\n"
+        "- thinking_and_values: 对象，描述思维方式与价值观，比如“理性批判 + 实用主义 + 合作性”，可包含 style/description/cooperation 等子字段（用中文）。\n"
         "请尽量基于提供的记忆推断，不要编造与记忆完全无关的内容；信息不足的字段可以给出简短的中文描述或使用空对象/空数组。"  # noqa: E501
     )
 
@@ -244,4 +252,6 @@ def generate_profile_from_semantics(
         "tools_and_habits": [],
         "social_relations": [],
         "project_facts": {},
+        "lifestyle_and_habits": [],
+        "thinking_and_values": {},
     }
