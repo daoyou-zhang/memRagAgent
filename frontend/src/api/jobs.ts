@@ -20,6 +20,21 @@ export type ListJobsResponse = {
   items: MemoryJob[]
 }
 
+export type CleanupJobsRequest = {
+  status?: string[]
+  before?: string
+  user_id?: string
+  project_id?: string
+}
+
+export type CleanupJobsResponse = {
+  deleted_jobs: number
+  status?: string[]
+  user_id?: string
+  project_id?: string
+  before?: string
+}
+
 export type CreateEpisodicJobPayload = {
   user_id?: string
   agent_id?: string
@@ -91,6 +106,10 @@ export async function listJobs(params?: {
   if (params?.session_id) qs.set('session_id', params.session_id)
   const suffix = qs.toString() ? `?${qs.toString()}` : ''
   return http.get<ListJobsResponse>(`/api/memory/jobs${suffix}`)
+}
+
+export async function cleanupJobs(payload: CleanupJobsRequest): Promise<CleanupJobsResponse> {
+  return http.post<CleanupJobsResponse>('/api/memory/jobs/cleanup', payload)
 }
 
 export async function runJob(jobId: number): Promise<{

@@ -3,6 +3,8 @@ from sqlalchemy import cast
 from sqlalchemy.dialects.postgresql import TEXT
 from sqlalchemy.orm import Session
 from sqlalchemy import func
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from repository.db_session import SessionLocal
 from models.memory import (
@@ -34,6 +36,21 @@ def _cosine(a: list[float], b: list[float]) -> float:
     if na == 0.0 or nb == 0.0:
         return 0.0
     return dot / (na * nb)
+
+
+def to_beijing_iso(dt: datetime | None) -> str | None:
+    """将时间统一转换为北京时间字符串，用于 API 返回。
+
+    - 若 dt 为 None，返回 None；
+    - 若 dt 无 tzinfo，视为 UTC；
+    - 最终转换为 Asia/Shanghai 后 isoformat。
+    """
+
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=ZoneInfo("UTC"))
+    return dt.astimezone(ZoneInfo("Asia/Shanghai")).isoformat()
 
 
 memories_bp = Blueprint("memories", __name__)
@@ -91,7 +108,7 @@ def create_memory():
                     "text": mem.text,
                     "importance": mem.importance,
                     "tags": mem.tags,
-                    "created_at": mem.created_at.isoformat()
+                    "created_at": to_beijing_iso(mem.created_at)
                     if mem.created_at
                     else None,
                 }
@@ -162,7 +179,7 @@ def get_full_context():
                     "id": m.id,
                     "role": m.role,
                     "content": m.content,
-                    "created_at": m.created_at.isoformat() if m.created_at else None,
+                    "created_at": to_beijing_iso(m.created_at) if m.created_at else None,
                 }
             )
 
@@ -311,8 +328,8 @@ def create_episodic_job():
                     "job_type": job.job_type,
                     "target_types": job.target_types,
                     "status": job.status,
-                    "created_at": job.created_at.isoformat(),
-                    "updated_at": job.updated_at.isoformat(),
+                    "created_at": to_beijing_iso(job.created_at),
+                    "updated_at": to_beijing_iso(job.updated_at),
                 }
             ),
             201,
@@ -365,8 +382,8 @@ def create_semantic_job():
                     "job_type": job.job_type,
                     "target_types": job.target_types,
                     "status": job.status,
-                    "created_at": job.created_at.isoformat(),
-                    "updated_at": job.updated_at.isoformat(),
+                    "created_at": to_beijing_iso(job.created_at),
+                    "updated_at": to_beijing_iso(job.updated_at),
                 }
             ),
             201,
@@ -415,8 +432,8 @@ def create_profile_job():
                     "job_type": job.job_type,
                     "target_types": job.target_types,
                     "status": job.status,
-                    "created_at": job.created_at.isoformat(),
-                    "updated_at": job.updated_at.isoformat(),
+                    "created_at": to_beijing_iso(job.created_at),
+                    "updated_at": to_beijing_iso(job.updated_at),
                 }
             ),
             201,
@@ -456,12 +473,73 @@ def list_jobs():
                     "target_types": job.target_types,
                     "status": job.status,
                     "error_message": job.error_message,
-                    "created_at": job.created_at.isoformat(),
-                    "updated_at": job.updated_at.isoformat(),
+                    "created_at": to_beijing_iso(job.created_at),
+                    "updated_at": to_beijing_iso(job.updated_at),
                 }
             )
 
         return jsonify({"items": items})
+    finally:
+        db.close()
+
+
+@memories_bp.post("/jobs/cleanup")
+def cleanup_jobs():
+    """手动清理 MemoryGenerationJob 记录。
+
+    请求体示例：
+
+    {
+      "status": ["done", "failed"],   // 可选，默认只清理 done+failed
+      "before": "2024-01-01T00:00:00", // 可选，北京时间，按 updated_at 早于该时间筛选
+      "user_id": "u1",                 // 可选
+      "project_id": "p1"               // 可选
+    }
+    """
+
+    payload = request.get_json(force=True) or {}
+
+    status_list = payload.get("status") or ["done", "failed"]
+    user_id = payload.get("user_id")
+    project_id = payload.get("project_id")
+
+    # 解析 before 时间（视为北京时间，再转换为 UTC 比较 updated_at）
+    before_ts: datetime | None = None
+    before_raw = payload.get("before")
+    if before_raw:
+        try:
+            local_dt = datetime.fromisoformat(before_raw.replace("Z", ""))
+            if local_dt.tzinfo is None:
+                local_dt = local_dt.replace(tzinfo=ZoneInfo("Asia/Shanghai"))
+            before_ts = local_dt.astimezone(ZoneInfo("UTC"))
+        except Exception:  # noqa: BLE001
+            return jsonify({"error": "invalid 'before' datetime format"}), 400
+
+    db: Session = SessionLocal()
+    try:
+        q = db.query(MemoryGenerationJob)
+
+        if status_list:
+            q = q.filter(MemoryGenerationJob.status.in_(status_list))
+        if user_id:
+            q = q.filter(MemoryGenerationJob.user_id == user_id)
+        if project_id:
+            q = q.filter(MemoryGenerationJob.project_id == project_id)
+        if before_ts is not None:
+            q = q.filter(MemoryGenerationJob.updated_at < before_ts)
+
+        deleted = q.delete(synchronize_session=False)
+        db.commit()
+
+        return jsonify(
+            {
+                "deleted_jobs": int(deleted),
+                "status": status_list,
+                "user_id": user_id,
+                "project_id": project_id,
+                "before": before_raw,
+            }
+        )
     finally:
         db.close()
 
@@ -562,8 +640,8 @@ def create_profile_job_auto():
                         "job_type": job.job_type,
                         "target_types": job.target_types,
                         "status": job.status,
-                        "created_at": job.created_at.isoformat(),
-                        "updated_at": job.updated_at.isoformat(),
+                        "created_at": to_beijing_iso(job.created_at),
+                        "updated_at": to_beijing_iso(job.updated_at),
                     },
                     "new_semantic_count": new_count,
                     "min_new_semantic": min_new_semantic,
@@ -791,10 +869,10 @@ def query_memories():
                         "emotion": mem.emotion,
                         "tags": mem.tags,
                         "metadata": mem.extra_metadata,
-                        "created_at": mem.created_at.isoformat()
+                        "created_at": to_beijing_iso(mem.created_at)
                         if mem.created_at
                         else None,
-                        "last_access_at": mem.last_access_at.isoformat()
+                        "last_access_at": to_beijing_iso(mem.last_access_at)
                         if mem.last_access_at
                         else None,
                         "recall_count": mem.recall_count,
@@ -814,6 +892,150 @@ def query_memories():
                 "total": total,
                 "has_next": has_next,
                 "has_prev": has_prev,
+            }
+        )
+    finally:
+        db.close()
+
+
+@memories_bp.post("/memories/cleanup")
+def cleanup_memories():
+    """手动清理记忆与画像。
+
+    支持三种 mode（针对单个 user+project）：
+
+    - by_user: 删除该用户的指定类型记忆（可选是否删除画像）；
+    - by_time: 删除 before 之前的指定类型记忆；
+    - by_limit: 仅保留最近 max_keep 条指定类型记忆，其余删除；
+
+    请求体示例：
+
+    {
+      "mode": "by_user" | "by_time" | "by_limit",
+      "user_id": "u1",              // by_user / by_limit 必填
+      "project_id": "p1",           // 可选
+      "types": ["episodic", "semantic"], // 可选，默认两种都清
+      "before": "2024-01-01T00:00:00",    // 仅 by_time 使用
+      "max_keep": 1000,              // 仅 by_limit 使用
+      "delete_profile": false        // 仅 by_user/by_time，可选
+    }
+    """
+
+    payload = request.get_json(force=True) or {}
+
+    mode = (payload.get("mode") or "").strip() or "by_user"
+    user_id = payload.get("user_id")
+    project_id = payload.get("project_id")
+    types = payload.get("types") or ["episodic", "semantic"]
+    delete_profile = bool(payload.get("delete_profile", False))
+
+    if mode not in {"by_user", "by_time", "by_limit"}:
+        return jsonify({"error": "invalid mode"}), 400
+
+    if mode in {"by_user", "by_limit"} and not user_id:
+        return jsonify({"error": "field 'user_id' is required for this mode"}), 400
+
+    # 解析 before 时间（视为北京时间，再转换为 UTC 与数据库比较）
+    before_ts: datetime | None = None
+    if mode == "by_time":
+        before_raw = payload.get("before")
+        if not before_raw:
+            return jsonify({"error": "field 'before' is required for mode=by_time"}), 400
+        try:
+            # 用户在页面填写的时间按 Asia/Shanghai 解析
+            local_dt = datetime.fromisoformat(before_raw.replace("Z", ""))
+            if local_dt.tzinfo is None:
+                local_dt = local_dt.replace(tzinfo=ZoneInfo("Asia/Shanghai"))
+            # 转换为 UTC，与数据库中的时间比较
+            before_ts = local_dt.astimezone(ZoneInfo("UTC"))
+        except Exception:  # noqa: BLE001
+            return jsonify({"error": "invalid 'before' datetime format"}), 400
+
+    max_keep: int | None = None
+    if mode == "by_limit":
+        try:
+            max_keep = int(payload.get("max_keep", 1000))
+        except (TypeError, ValueError):
+            max_keep = 1000
+        if max_keep is not None and max_keep <= 0:
+            return jsonify({"error": "max_keep must be > 0"}), 400
+
+    # 规范化 types
+    valid_types = {"episodic", "semantic"}
+    target_types = [t for t in types if t in valid_types]
+    if not target_types:
+        target_types = ["episodic", "semantic"]
+
+    db: Session = SessionLocal()
+    try:
+        deleted_memories = 0
+        deleted_embeddings = 0
+        deleted_profiles = 0
+
+        base_q = db.query(Memory).filter(Memory.type.in_(target_types))
+        if user_id:
+            base_q = base_q.filter(Memory.user_id == user_id)
+        if project_id:
+            base_q = base_q.filter(Memory.project_id == project_id)
+
+        if mode == "by_user":
+            mem_ids = [m.id for m in base_q.all()]
+        elif mode == "by_time":
+            if before_ts is not None:
+                base_q = base_q.filter(Memory.created_at < before_ts)
+            mem_ids = [m.id for m in base_q.all()]
+        else:  # by_limit
+            # 仅对单个用户生效
+            q = base_q.order_by(Memory.created_at.desc())
+            all_ids = [m.id for m in q.all()]
+            if len(all_ids) <= (max_keep or 0):
+                mem_ids = []
+            else:
+                mem_ids = all_ids[(max_keep or 0) :]
+
+        if mem_ids:
+            # 删除 embeddings
+            deleted_embeddings = (
+                db.query(MemoryEmbedding)
+                .filter(MemoryEmbedding.memory_id.in_(mem_ids))
+                .delete(synchronize_session=False)
+            )
+
+            # 删除 memories
+            deleted_memories = (
+                base_q.filter(Memory.id.in_(mem_ids))
+                .delete(synchronize_session=False)
+            )
+
+        # 可选：删除画像（当前 user+project 的 Profile + ProfileHistory）
+        if delete_profile and user_id:
+            prof_q = db.query(Profile).filter(Profile.user_id == user_id)
+            if project_id is not None:
+                prof_q = prof_q.filter(Profile.project_id == project_id)
+            profiles = prof_q.all()
+            if profiles:
+                prof_ids = [p.id for p in profiles]
+                # 删除历史画像
+                db.query(ProfileHistory).filter(ProfileHistory.user_id == user_id).delete(
+                    synchronize_session=False
+                )
+                # 删除当前画像
+                deleted_profiles = (
+                    prof_q.filter(Profile.id.in_(prof_ids))
+                    .delete(synchronize_session=False)
+                )
+
+        db.commit()
+
+        return jsonify(
+            {
+                "mode": mode,
+                "user_id": user_id,
+                "project_id": project_id,
+                "types": target_types,
+                "deleted_memories": int(deleted_memories),
+                "deleted_embeddings": int(deleted_embeddings),
+                "deleted_profiles": int(deleted_profiles),
             }
         )
     finally:
@@ -848,7 +1070,7 @@ def run_job(job_id: int):
                         "job": {
                             "id": job.id,
                             "status": job.status,
-                            "updated_at": job.updated_at.isoformat(),
+                            "updated_at": to_beijing_iso(job.updated_at),
                         }
                     }
                 ),
@@ -1028,7 +1250,7 @@ def run_job(job_id: int):
             "job": {
                 "id": job.id,
                 "status": job.status,
-                "updated_at": job.updated_at.isoformat() if job.updated_at else None,
+                "updated_at": to_beijing_iso(job.updated_at),
             }
         }
 

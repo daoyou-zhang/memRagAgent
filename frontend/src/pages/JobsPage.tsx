@@ -9,6 +9,7 @@ import {
   closeSession,
   createProfileJobAuto,
   type MemoryJob,
+  cleanupJobs,
 } from '../api/jobs'
 
 function JobsPage() {
@@ -34,6 +35,12 @@ function JobsPage() {
   const [autoProfileUserId, setAutoProfileUserId] = useState(formUserId)
   const [autoProfileProjectId, setAutoProfileProjectId] = useState(formProjectId)
   const [autoProfileResult, setAutoProfileResult] = useState<string>('')
+
+  const [cleanupStatus, setCleanupStatus] = useState<string>('done,failed')
+  const [cleanupUserId, setCleanupUserId] = useState('')
+  const [cleanupProjectId, setCleanupProjectId] = useState('')
+  const [cleanupBefore, setCleanupBefore] = useState('')
+  const [cleanupResult, setCleanupResult] = useState<string>('')
 
   const loadJobs = async () => {
     setLoading(true)
@@ -273,6 +280,82 @@ function JobsPage() {
             根据会话元信息生成占位性的总结文案。
           </p>
         </form>
+      </section>
+
+      <section className="section-card" style={{ marginTop: '1rem' }}>
+        <h2 className="section-title">Job 清理</h2>
+        <div style={{ display: 'grid', gap: '0.5rem', marginBottom: '0.75rem' }}>
+          <p className="muted-text" style={{ marginBottom: 0 }}>
+            按条件删除旧的 Job 记录（默认只清理 done,failed）。时间按北京时间填写。
+          </p>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'center' }}>
+            <label>
+              status 列表(逗号分隔):{' '}
+              <input
+                value={cleanupStatus}
+                onChange={(e) => setCleanupStatus(e.target.value)}
+                style={{ width: '12rem' }}
+              />
+            </label>
+            <label>
+              user_id:{' '}
+              <input
+                value={cleanupUserId}
+                onChange={(e) => setCleanupUserId(e.target.value)}
+                style={{ width: '10rem' }}
+              />
+            </label>
+            <label>
+              project_id:{' '}
+              <input
+                value={cleanupProjectId}
+                onChange={(e) => setCleanupProjectId(e.target.value)}
+                style={{ width: '10rem' }}
+              />
+            </label>
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'center' }}>
+            <label>
+              删除此时间之前的 Job (updated_at, 北京时间):{' '}
+              <input
+                value={cleanupBefore}
+                onChange={(e) => setCleanupBefore(e.target.value)}
+                style={{ width: '20rem' }}
+                placeholder="例如 2024-01-01T00:00:00"
+              />
+            </label>
+            <button
+              type="button"
+              onClick={async () => {
+                setError(null)
+                setCleanupResult('')
+                try {
+                  const statusArr = cleanupStatus
+                    .split(',')
+                    .map((s) => s.trim())
+                    .filter(Boolean)
+                  const resp = await cleanupJobs({
+                    status: statusArr.length ? statusArr : undefined,
+                    user_id: cleanupUserId || undefined,
+                    project_id: cleanupProjectId || undefined,
+                    before: cleanupBefore || undefined,
+                  })
+                  setCleanupResult(`deleted_jobs=${resp.deleted_jobs}`)
+                  await loadJobs()
+                } catch (err) {
+                  setError((err as Error).message)
+                }
+              }}
+            >
+              执行 Job 清理
+            </button>
+          </div>
+          {cleanupResult && (
+            <p className="muted-text" style={{ marginTop: '0.25rem' }}>
+              {cleanupResult}
+            </p>
+          )}
+        </div>
       </section>
 
       <section className="section-card" style={{ marginTop: '1rem' }}>
