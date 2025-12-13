@@ -4,8 +4,8 @@ from flask import Blueprint, jsonify, request
 from sqlalchemy.orm import Session
 
 from repository.db_session import SessionLocal
-from models.memory import Memory, Profile
-from llm_client import generate_profile_from_semantics
+from models.memory import Memory, Profile, KnowledgeInsight
+from llm_client import generate_profile_from_semantics, generate_profile_with_reflection
 
 profiles_bp = Blueprint("profiles", __name__)
 
@@ -77,11 +77,28 @@ def get_profile(user_id: str):
                     }
                 )
 
-            aggregated_profile = generate_profile_from_semantics(
-                user_id=user_id,
-                project_id=project_id,
-                semantic_items=semantic_items,
-            )
+            # 使用增强版聚合：同时生成画像 + 提取知识洞察
+            enable_knowledge_extraction = os.getenv(
+                "PROFILE_ENABLE_KNOWLEDGE_EXTRACTION", "true"
+            ).lower() in {"1", "true", "yes"}
+            
+            knowledge_insights = []
+            if enable_knowledge_extraction and len(semantic_items) >= 5:
+                # 使用增强版：画像 + 知识提取（复用同一次 LLM 调用）
+                result = generate_profile_with_reflection(
+                    user_id=user_id,
+                    project_id=project_id,
+                    semantic_items=semantic_items,
+                )
+                aggregated_profile = result.get("profile", {})
+                knowledge_insights = result.get("knowledge_insights", [])
+            else:
+                # 使用基础版：仅生成画像
+                aggregated_profile = generate_profile_from_semantics(
+                    user_id=user_id,
+                    project_id=project_id,
+                    semantic_items=semantic_items,
+                )
 
             # 将聚合画像写入 profiles 表（upsert 按 user_id + project_id）
             if aggregated_profile:
@@ -97,6 +114,22 @@ def get_profile(user_id: str):
                         },
                     )
                     db.add(cached)
+                
+                # 保存提取的知识洞察
+                for insight in knowledge_insights:
+                    if isinstance(insight, dict) and insight.get("content"):
+                        ki = KnowledgeInsight(
+                            user_id=user_id,
+                            project_id=project_id,
+                            source_type="profile_aggregate",
+                            content=insight.get("content", ""),
+                            category=insight.get("category", "general"),
+                            confidence=float(insight.get("confidence", 0.7)),
+                            tags=insight.get("tags", []),
+                            status="pending",
+                        )
+                        db.add(ki)
+                
                 db.commit()
 
         return jsonify(

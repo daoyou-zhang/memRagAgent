@@ -54,6 +54,40 @@ function HomePage() {
             管理多领域知识集合与文档（法律、心理学、企业话术、医院术语等）。
           </p>
         </Link>
+        <Link
+          to="/cognitive"
+          style={{
+            border: '1px solid #ddd',
+            borderRadius: 8,
+            padding: '1.25rem',
+            textDecoration: 'none',
+            color: 'inherit',
+            background: '#fff8f0',
+          }}
+        >
+          <h3 style={{ marginTop: 0, marginBottom: '0.5rem' }}>🧠 道友认知测试台</h3>
+          <p style={{ margin: 0, fontSize: 13, color: '#555' }}>
+            测试 Daoyou Agent 的认知 API，支持记忆、RAG、学习等参数调试。
+          </p>
+        </Link>
+        <a
+          href="http://localhost:8000/test/stream"
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{
+            border: '1px solid #ddd',
+            borderRadius: 8,
+            padding: '1.25rem',
+            textDecoration: 'none',
+            color: 'inherit',
+            background: 'linear-gradient(135deg, #667eea22 0%, #764ba222 100%)',
+          }}
+        >
+          <h3 style={{ marginTop: 0, marginBottom: '0.5rem' }}>🌊 流式响应测试</h3>
+          <p style={{ margin: 0, fontSize: 13, color: '#555' }}>
+            测试 SSE 流式响应，实时查看 LLM 输出效果。
+          </p>
+        </a>
       </div>
     </div>
   )

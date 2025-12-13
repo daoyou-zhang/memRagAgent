@@ -10,6 +10,7 @@ from flask_cors import CORS
 from routes import memory_bp
 from routes.profiles import profiles_bp
 from routes.rag import rag_bp
+from routes.knowledge import knowledge_bp
 from repository.db_session import init_db, SessionLocal
 from models.memory import MemoryGenerationJob
 
@@ -122,6 +123,9 @@ def create_app() -> Flask:
 
     # 注册 RAG 蓝图，挂载到 /api/rag（与 memory_bp 下的 /rag 不冲突，便于上游直接调用）
     app.register_blueprint(rag_bp, url_prefix="/api/rag")
+
+    # 注册知识洞察蓝图，挂载到 /api/knowledge
+    app.register_blueprint(knowledge_bp, url_prefix="/api/knowledge")
 
     # 启动基于 env 控制的 Job 调度线程（只负责调用已有 /jobs/<id>/run 接口）
     _start_job_scheduler(app)

@@ -255,3 +255,206 @@ def generate_profile_from_semantics(
         "lifestyle_and_habits": [],
         "thinking_and_values": {},
     }
+
+
+def extract_knowledge_insights(
+    project_id: str | None,
+    semantic_items: List[Dict[str, Any]],
+    recent_conversations: List[Dict[str, Any]] | None = None,
+) -> List[Dict[str, Any]]:
+    """从 semantic 记忆和对话中提取可复用的知识洞察
+    
+    这些知识将用于丰富知识库，提升后续回答质量。
+    
+    Args:
+        project_id: 项目 ID
+        semantic_items: 语义记忆条目
+        recent_conversations: 近期对话记录（可选）
+        
+    Returns:
+        知识洞察列表，每项包含 content/category/confidence/tags
+    """
+    if not semantic_items:
+        return []
+    
+    max_items = 30
+    trimmed_items = semantic_items[:max_items]
+    
+    system_prompt = (
+        "你是一个知识提取专家，负责从用户对话和记忆中提取可复用的知识点。\n"
+        "这些知识将用于丰富知识库，帮助后续回答类似问题。\n\n"
+        "请提取以下类型的知识：\n"
+        "1) domain: 领域专业知识（如八字排盘规则、法律条款解释）\n"
+        "2) skill: 技能技巧（如沟通技巧、问题解决方法）\n"
+        "3) fact: 事实信息（如产品特性、历史事件）\n"
+        "4) pattern: 模式规律（如用户常见问题、最佳实践）\n"
+        "5) general: 通用知识\n\n"
+        "输出 JSON 数组，每个元素：\n"
+        '{"content": "知识点内容", "category": "domain/skill/fact/pattern/general", '
+        '"confidence": 0.7-1.0, "tags": ["tag1", "tag2"]}\n\n'
+        "注意：\n"
+        "- 只提取可复用、有普遍价值的知识\n"
+        "- 不要提取个人隐私信息\n"
+        "- confidence 表示知识的可靠程度\n"
+        "- 如果没有可提取的知识，返回空数组 []"
+    )
+    
+    user_prompt = (
+        f"项目 ID: {project_id or '通用'}\n\n"
+        "【语义记忆条目】\n"
+        f"{json.dumps(trimmed_items, ensure_ascii=False)}\n\n"
+        "请提取可复用的知识点，只输出 JSON 数组。"
+    )
+    
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+    
+    raw = chat_completion(messages)
+    
+    try:
+        data = json.loads(raw)
+        if isinstance(data, list):
+            return [x for x in data if isinstance(x, dict) and "content" in x]
+        return []
+    except json.JSONDecodeError:
+        return []
+
+
+def generate_self_reflection(
+    user_input: str,
+    assistant_response: str,
+    intent_category: str | None = None,
+    tool_used: str | None = None,
+) -> Dict[str, Any]:
+    """对单次对话进行质量评估和自反省
+    
+    Args:
+        user_input: 用户输入
+        assistant_response: 助手回复
+        intent_category: 意图类别
+        tool_used: 使用的工具
+        
+    Returns:
+        反省结果，包含 satisfaction_score/problem_solved/strengths/weaknesses/suggestions
+    """
+    system_prompt = (
+        "你是一个对话质量分析专家。分析助手的回复质量，给出客观评估。\n\n"
+        "请以 JSON 格式返回：\n"
+        '{"satisfaction_score": 1-10, "completeness": "complete/partial/incomplete", '
+        '"problem_solved": true/false, "strengths": ["优点1"], "weaknesses": ["缺点1"], '
+        '"suggestions": ["建议1"], "summary": "一句话总结"}\n\n'
+        "评分标准：\n"
+        "- 10分：完美回答，超出预期\n"
+        "- 7-9分：很好，基本满足需求\n"
+        "- 4-6分：一般，部分满足需求\n"
+        "- 1-3分：较差，未能满足需求\n\n"
+        "只返回 JSON。"
+    )
+    
+    user_prompt = (
+        f"【用户问题】\n{user_input[:500]}\n\n"
+        f"【助手回复】\n{assistant_response[:1000]}\n\n"
+        f"【意图类别】{intent_category or '未知'}\n"
+        f"【使用工具】{tool_used or '无'}"
+    )
+    
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+    
+    raw = chat_completion(messages)
+    
+    try:
+        data = json.loads(raw)
+        if isinstance(data, dict):
+            return data
+    except json.JSONDecodeError:
+        pass
+    
+    return {
+        "satisfaction_score": 5,
+        "completeness": "partial",
+        "problem_solved": False,
+        "strengths": [],
+        "weaknesses": [],
+        "suggestions": [],
+        "summary": "评估失败",
+    }
+
+
+def generate_profile_with_reflection(
+    user_id: str,
+    project_id: str | None,
+    semantic_items: List[Dict[str, Any]],
+    recent_reflections: List[Dict[str, Any]] | None = None,
+) -> Dict[str, Any]:
+    """生成画像的同时进行自我反省（复用同一次 LLM 调用）
+    
+    Args:
+        user_id: 用户 ID
+        project_id: 项目 ID
+        semantic_items: 语义记忆
+        recent_reflections: 近期反省记录（用于参考）
+        
+    Returns:
+        包含 profile 和 reflection_summary 的结果
+    """
+    if not semantic_items:
+        return {
+            "profile": generate_profile_from_semantics(user_id, project_id, []),
+            "reflection_summary": None,
+            "knowledge_insights": [],
+        }
+    
+    max_items = 35
+    trimmed_items = semantic_items[:max_items]
+    
+    system_prompt = (
+        "你是一个综合分析助手，需要同时完成三项任务：\n"
+        "1) 生成用户画像\n"
+        "2) 反省近期对话质量\n"
+        "3) 提取可复用知识\n\n"
+        "请输出一个 JSON 对象，包含三个字段：\n"
+        "- profile: 用户画像对象（communication_style/interests/risk_preference/...）\n"
+        "- reflection_summary: 对象，包含 avg_score(平均满意度)/common_issues(常见问题)/improvement_direction(改进方向)\n"
+        "- knowledge_insights: 数组，每项 {content, category, confidence}\n\n"
+        "只输出 JSON，不要其他内容。"
+    )
+    
+    user_prompt = (
+        f"- user_id: {user_id}\n- project_id: {project_id or 'null'}\n\n"
+        "【语义记忆条目】\n"
+        f"{json.dumps(trimmed_items, ensure_ascii=False)}\n\n"
+        "请生成画像、反省总结和知识洞察。"
+    )
+    
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+    
+    raw = chat_completion(messages, max_tokens=1500)
+    
+    try:
+        data = json.loads(raw)
+        if isinstance(data, dict):
+            profile = data.get("profile", {})
+            profile.setdefault("user_id", user_id)
+            profile.setdefault("project_id", project_id)
+            return {
+                "profile": profile,
+                "reflection_summary": data.get("reflection_summary"),
+                "knowledge_insights": data.get("knowledge_insights", []),
+            }
+    except json.JSONDecodeError:
+        pass
+    
+    # 降级：只生成画像
+    return {
+        "profile": generate_profile_from_semantics(user_id, project_id, semantic_items),
+        "reflection_summary": None,
+        "knowledge_insights": [],
+    }

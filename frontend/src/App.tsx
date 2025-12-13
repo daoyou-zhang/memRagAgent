@@ -12,6 +12,7 @@ import KnowledgeCollectionsPage from './pages/KnowledgeCollectionsPage'
 import KnowledgeDocumentsPage from './pages/KnowledgeDocumentsPage'
 import KnowledgeRagPage from './pages/KnowledgeRagPage'
 import GraphPage from './pages/GraphPage'
+import CognitivePage from './pages/CognitivePage'
 
 function AppShell() {
   const location = useLocation()
@@ -34,6 +35,14 @@ function AppShell() {
           <nav className="app-nav" style={{ display: 'flex', gap: '1rem' }}>
             {/* 首页入口：记忆管理 / 知识库均可返回 */}
             <Link to="/">首页</Link>
+
+            {/* 道友认知测试台 */}
+            {location.pathname.startsWith('/cognitive') && (
+              <>
+                <Link to="/cognitive">认知测试台</Link>
+                <a href="http://localhost:8000/test/stream" target="_blank" rel="noopener noreferrer">流式响应测试</a>
+              </>
+            )}
 
             {/* 记忆管理相关路由时展示的导航 */}
             {(
@@ -82,6 +91,7 @@ function AppShell() {
           <Route path="/knowledge/documents" element={<KnowledgeDocumentsPage />} />
           <Route path="/knowledge/rag" element={<KnowledgeRagPage />} />
           <Route path="/graph" element={<GraphPage />} />
+          <Route path="/cognitive" element={<CognitivePage />} />
           <Route path="*" element={<div>Not Found</div>} />
         </Routes>
       </main>

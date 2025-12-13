@@ -21,6 +21,8 @@ engine = create_engine(
     DATABASE_URL,
     echo=False,
     future=True,
+    pool_pre_ping=True,  # 使用前检测连接是否有效，防止"server closed the connection"
+    pool_recycle=300,    # 每 5 分钟回收连接，避免长时间闲置被服务器断开
 )
 
 SessionLocal = sessionmaker(

@@ -181,3 +181,59 @@ class ProfileHistory(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class KnowledgeInsight(Base):
+    """知识洞察 - 从对话中提取的可复用知识"""
+    __tablename__ = "knowledge_insights"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    user_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    project_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    source_type: Mapped[str] = mapped_column(String(32), nullable=False, default="conversation")
+
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    category: Mapped[str] = mapped_column(String(32), nullable=False, default="general")
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.7)
+
+    tags: Mapped[Optional[Any]] = mapped_column(JSONB, nullable=True)
+    extra_metadata: Mapped[Optional[Any]] = mapped_column("metadata", JSONB, nullable=True)
+
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    pushed_to_knowledge: Mapped[bool] = mapped_column(Integer, nullable=False, default=0)
+    pushed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class SelfReflection(Base):
+    """自我反省记录 - 对话质量评估"""
+    __tablename__ = "self_reflections"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    user_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    project_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    session_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+
+    satisfaction_score: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
+    problem_solved: Mapped[bool] = mapped_column(Integer, nullable=False, default=0)
+    completeness: Mapped[str] = mapped_column(String(32), nullable=False, default="partial")
+
+    strengths: Mapped[Optional[Any]] = mapped_column(JSONB, nullable=True)
+    weaknesses: Mapped[Optional[Any]] = mapped_column(JSONB, nullable=True)
+    suggestions: Mapped[Optional[Any]] = mapped_column(JSONB, nullable=True)
+    summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    intent_category: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    tool_used: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
