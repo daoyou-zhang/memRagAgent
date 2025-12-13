@@ -22,14 +22,14 @@ import httpx
 from loguru import logger
 from dotenv import load_dotenv
 
-# 加载 .env 配置（从 daoyou_agent 目录）
-_current_dir = Path(__file__).parent.parent  # daoyou_agent 目录
-_env_path = _current_dir / ".env"
-if _env_path.exists():
-    load_dotenv(_env_path)
-    logger.info(f"已加载配置: {_env_path}")
-else:
-    load_dotenv()  # 回退到默认
+# 加载 .env 配置：优先根目录，然后本地目录（本地覆盖）
+_backend_root = Path(__file__).parent.parent.parent  # backend 目录
+_root_env = _backend_root / ".env"
+_local_env = Path(__file__).parent.parent / ".env"  # daoyou_agent 目录
+
+load_dotenv(_root_env)  # 根目录配置
+load_dotenv(_local_env)  # 本地配置可覆盖
+logger.info(f"配置加载完成: root={_root_env.exists()}, local={_local_env.exists()}")
 
 # ============================================================
 # 默认配置（从环境变量读取，用于回复生成）

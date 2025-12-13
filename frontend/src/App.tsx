@@ -13,88 +13,165 @@ import KnowledgeDocumentsPage from './pages/KnowledgeDocumentsPage'
 import KnowledgeRagPage from './pages/KnowledgeRagPage'
 import GraphPage from './pages/GraphPage'
 import CognitivePage from './pages/CognitivePage'
+import TenantsPage from './pages/TenantsPage'
+import SystemStatusPage from './pages/SystemStatusPage'
+
+// 导航配置
+const navGroups = [
+  {
+    title: '对话',
+    items: [
+      { path: '/cognitive', label: '认知对话', icon: '💬' },
+    ]
+  },
+  {
+    title: '记忆管理',
+    items: [
+      { path: '/memories/create', label: '创建记忆', icon: '➕' },
+      { path: '/memories/query', label: '查询记忆', icon: '🔍' },
+      { path: '/memories/cleanup', label: '记忆清理', icon: '🗑️' },
+      { path: '/jobs', label: '生成任务', icon: '⚙️' },
+      { path: '/profiles', label: '用户画像', icon: '👤' },
+    ]
+  },
+  {
+    title: '检索测试',
+    items: [
+      { path: '/rag', label: 'Memory RAG', icon: '🧠' },
+      { path: '/full-context', label: 'Full Context', icon: '📋' },
+      { path: '/knowledge/rag', label: 'Knowledge RAG', icon: '📚' },
+    ]
+  },
+  {
+    title: '知识库',
+    items: [
+      { path: '/knowledge/collections', label: '知识集合', icon: '📁' },
+      { path: '/knowledge/documents', label: '知识文档', icon: '📄' },
+      { path: '/graph', label: '知识图谱', icon: '🕸️' },
+    ]
+  },
+  {
+    title: '系统管理',
+    items: [
+      { path: '/tenants', label: '多租户管理', icon: '🏢' },
+      { path: '/system', label: '系统状态', icon: '📊' },
+    ]
+  },
+]
+
+// 侧边栏组件
+function Sidebar() {
+  const location = useLocation()
+  
+  return (
+    <aside className="sidebar">
+      <div className="sidebar-header">
+        <Link to="/" className="sidebar-logo">
+          <div className="sidebar-logo-icon">🧠</div>
+          <span>memRagAgent</span>
+        </Link>
+      </div>
+      
+      <nav style={{ flex: 1, overflowY: 'auto' }}>
+        {navGroups.map((group, gi) => (
+          <div className="nav-group" key={gi}>
+            <div className="nav-group-title">{group.title}</div>
+            {group.items.map((item, ii) => (
+              <Link
+                key={ii}
+                to={item.path}
+                className={`nav-item ${location.pathname === item.path ? 'active' : ''}`}
+              >
+                <span className="nav-item-icon">{item.icon}</span>
+                <span>{item.label}</span>
+              </Link>
+            ))}
+          </div>
+        ))}
+      </nav>
+      
+      <div style={{ padding: '1rem 1.25rem', borderTop: '1px solid var(--border-color)' }}>
+        <a
+          href="http://localhost:8000/test/stream"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="nav-item"
+          style={{ margin: '-0.625rem -1.25rem' }}
+        >
+          <span className="nav-item-icon">🔗</span>
+          <span>流式测试</span>
+        </a>
+      </div>
+    </aside>
+  )
+}
+
+// 页面标题映射
+const pageTitles: Record<string, string> = {
+  '/': '首页',
+  '/cognitive': '认知对话',
+  '/memories/create': '创建记忆',
+  '/memories/query': '查询记忆',
+  '/memories/cleanup': '记忆清理',
+  '/jobs': '生成任务',
+  '/rag': 'Memory RAG 检索',
+  '/profiles': '用户画像',
+  '/full-context': 'Full Context 测试',
+  '/knowledge': '知识集合',
+  '/knowledge/collections': '知识集合',
+  '/knowledge/documents': '知识文档',
+  '/knowledge/rag': 'Knowledge RAG 检索',
+  '/graph': '知识图谱',
+  '/tenants': '多租户管理',
+  '/system': '系统状态',
+}
 
 function AppShell() {
   const location = useLocation()
+  const pageTitle = pageTitles[location.pathname] || 'memRagAgent'
 
   return (
-    <div className="App" style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
-      <header
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: '0.75rem 1.5rem',
-          borderBottom: '1px solid #ddd',
-        }}
-      >
-        <div>
-          <span style={{ fontWeight: 'bold' }}>memRagAgent Console</span>
-        </div>
-        {location.pathname !== '/' && (
-          <nav className="app-nav" style={{ display: 'flex', gap: '1rem' }}>
-            {/* 首页入口：记忆管理 / 知识库均可返回 */}
-            <Link to="/">首页</Link>
+    <div className="app-container">
+      <Sidebar />
+      
+      <div className="main-content">
+        <header className="topbar">
+          <div className="topbar-title">{pageTitle}</div>
+          <div className="topbar-actions">
+            <Link to="/">
+              <button>🏠 首页</button>
+            </Link>
+          </div>
+        </header>
 
-            {/* 道友认知测试台 */}
-            {location.pathname.startsWith('/cognitive') && (
-              <>
-                <Link to="/cognitive">认知测试台</Link>
-                <a href="http://localhost:8000/test/stream" target="_blank" rel="noopener noreferrer">流式响应测试</a>
-              </>
-            )}
-
-            {/* 记忆管理相关路由时展示的导航 */}
-            {(
-              location.pathname.startsWith('/memories') ||
-              location.pathname.startsWith('/jobs') ||
-              location.pathname.startsWith('/rag') ||
-              location.pathname.startsWith('/profiles') ||
-              location.pathname.startsWith('/full-context')
-            ) && (
-              <>
-                <Link to="/memories/create">创建记忆</Link>
-                <Link to="/memories/query">查询记忆</Link>
-                <Link to="/memories/cleanup">记忆清理</Link>
-                <Link to="/jobs">记忆生成 Job</Link>
-                <Link to="/rag">RAG 检索实验台</Link>
-                <Link to="/profiles">画像查看</Link>
-                <Link to="/full-context">Full Context 实验台</Link>
-              </>
-            )}
-
-            {/* 知识库 / 图谱相关路由时展示的导航 */}
-            {(location.pathname.startsWith('/knowledge') || location.pathname.startsWith('/graph')) && (
-              <>
-                <Link to="/knowledge/collections">知识集合</Link>
-                <Link to="/knowledge/documents">知识文档</Link>
-                <Link to="/knowledge/rag">知识库 RAG</Link>
-                <Link to="/graph">知识图谱</Link>
-              </>
-            )}
-          </nav>
-        )}
-      </header>
-
-      <main style={{ flex: 1, padding: '1rem' }}>
-        <Routes>
-          <Route path="/" element={<HomePage />} />
-          <Route path="/memories/create" element={<MemoryCreatePage />} />
-          <Route path="/memories/query" element={<MemoryQueryPage />} />
-          <Route path="/memories/cleanup" element={<MemoryCleanupPage />} />
-          <Route path="/jobs" element={<JobsPage />} />
-          <Route path="/rag" element={<RagPage />} />
-          <Route path="/profiles" element={<ProfilesPage />} />
-          <Route path="/full-context" element={<FullContextPage />} />
-          <Route path="/knowledge" element={<KnowledgeCollectionsPage />} />
-          <Route path="/knowledge/collections" element={<KnowledgeCollectionsPage />} />
-          <Route path="/knowledge/documents" element={<KnowledgeDocumentsPage />} />
-          <Route path="/knowledge/rag" element={<KnowledgeRagPage />} />
-          <Route path="/graph" element={<GraphPage />} />
-          <Route path="/cognitive" element={<CognitivePage />} />
-          <Route path="*" element={<div>Not Found</div>} />
-        </Routes>
-      </main>
+        <main className="page-content">
+          <Routes>
+            <Route path="/" element={<HomePage />} />
+            <Route path="/memories/create" element={<MemoryCreatePage />} />
+            <Route path="/memories/query" element={<MemoryQueryPage />} />
+            <Route path="/memories/cleanup" element={<MemoryCleanupPage />} />
+            <Route path="/jobs" element={<JobsPage />} />
+            <Route path="/rag" element={<RagPage />} />
+            <Route path="/profiles" element={<ProfilesPage />} />
+            <Route path="/full-context" element={<FullContextPage />} />
+            <Route path="/knowledge" element={<KnowledgeCollectionsPage />} />
+            <Route path="/knowledge/collections" element={<KnowledgeCollectionsPage />} />
+            <Route path="/knowledge/documents" element={<KnowledgeDocumentsPage />} />
+            <Route path="/knowledge/rag" element={<KnowledgeRagPage />} />
+            <Route path="/graph" element={<GraphPage />} />
+            <Route path="/cognitive" element={<CognitivePage />} />
+            <Route path="/tenants" element={<TenantsPage />} />
+            <Route path="/system" element={<SystemStatusPage />} />
+            <Route path="*" element={
+              <div className="empty-state">
+                <div className="empty-state-icon">🔍</div>
+                <p>页面不存在</p>
+                <Link to="/">返回首页</Link>
+              </div>
+            } />
+          </Routes>
+        </main>
+      </div>
     </div>
   )
 }

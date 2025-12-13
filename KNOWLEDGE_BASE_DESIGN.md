@@ -183,7 +183,41 @@ app.register_blueprint(knowledge_bp, url_prefix="/api/knowledge")
 - `GET /api/knowledge/documents/<document_id>/chunks`
   - 返回指定文档下的所有片段（不含 embedding 字段，便于控制台查看）。
 
-> 说明：当前尚未实现“索引 / RAG 查询”接口，后续会在本子系统中补充。
+### 3.5 文档索引
+
+- `POST /api/knowledge/documents/<id>/index`
+  - 将指定文档做抽取+分块+embedding 写入 `knowledge_chunks`；
+  - 支持 JSONL / JSON / txt / pdf / docx 等格式。
+
+### 3.6 RAG 查询
+
+- `POST /api/knowledge/rag/query`
+
+  ```jsonc
+  {
+    "project_id": "proj_law_demo",      // 可选
+    "collection_ids": [1, 2],           // 可选，限定集合
+    "domain": "law",                    // 可选，按领域过滤
+    "query": "解除劳动合同的补偿标准是什么？",
+    "top_k": 8,
+    "required_tags": ["劳动合同"],      // 可选，必须命中的标签
+    "preferred_tags": ["经济补偿金"]    // 可选，优先加分的标签
+  }
+  ```
+
+  - **Redis 缓存**：查询结果自动缓存 5 分钟，重复查询直接返回。
+
+### 3.7 图谱 API
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/knowledge/graph/search` | 搜索图谱实体 |
+| POST | `/api/knowledge/graph/neighbors` | 获取实体邻居 |
+| POST | `/api/knowledge/graph/path` | 查找路径 |
+| POST | `/api/knowledge/graph/extract` | 从文本抽取实体 |
+| POST | `/api/knowledge/graph/rag` | 图谱增强 RAG |
+| POST | `/api/knowledge/graph/query` | 执行 Cypher |
+| POST | `/api/knowledge/graph/reset` | 重置图谱 |
 
 ---
 
@@ -251,39 +285,33 @@ app.register_blueprint(knowledge_bp, url_prefix="/api/knowledge")
    - 通过文件路径或 JSON 字段中的 `type/domain` 判断属于：`law / psychology / sales_script / medical_terms / ...`；
    - 不同领域可以映射到不同 `knowledge_collections`，但仍复用同一套表结构与索引脚本。
 
-### 5.2 后续接口规划（尚未实现）
+### 5.2 性能优化（已实现）
 
-- `POST /api/knowledge/documents/<id>/index`
-  - 将指定文档做抽取+分块+embedding 写入 `knowledge_chunks`；
-
-- `POST /api/knowledge/rag/query`
-
-  ```jsonc
-  {
-    "project_id": "proj_law_demo",      // 可选
-    "collection_ids": [1, 2],           // 可选，限定集合
-    "domain": "law",                  // 可选，按领域过滤
-    "query": "解除劳动合同的补偿标准是什么？",
-    "top_k": 8
-  }
-  ```
-
-  - 实现方式可参考 `backend/memory/routes/rag.py` 中的向量检索与 rerank 逻辑，只是数据源改为 `knowledge_chunks`。
+- **Redis 缓存**：RAG 查询结果缓存 5 分钟
+- **图谱查询缓存**：搜索和邻居查询缓存 10 分钟
+- **连接池**：PostgreSQL 连接池 `pool_size=10, max_overflow=20`
+- **批量操作**：支持批量向量写入
 
 ---
 
-## 6. 前端控制台与多场景应用
+## 6. 前端控制台与多场景应用（已实现）
 
-前端层面，计划在现有控制台中新增一个“知识库管理”入口：
+前端已实现完整的知识库管理界面：
 
-- 功能 MVP：
-  - 列表 / 创建 **知识集合**（按 domain & project 区分）；
-  - 列表 / 创建 **文档**（登记源文件或业务 ID）；
-  - 查看指定文档下的 **chunks**，调试分块与元数据情况；
-- 后续可扩展：
-  - 手动触发 `index` 操作；
-  - 对接 `rag/query`，提供知识库 RAG Playground；
-  - 针对不同领域（法律/心理/话术/医疗）配置不同的展示视图（例如法条的条款号、话术脚本的场景标签等）。
+### 已实现页面
+
+| 页面 | 路径 | 功能 |
+|------|------|------|
+| 知识集合 | `/knowledge/collections` | 列表/创建集合，按 domain & project 筛选 |
+| 知识文档 | `/knowledge/documents` | 文档管理，手动触发索引 |
+| Knowledge RAG | `/knowledge/rag` | RAG Playground，测试检索效果 |
+| 知识图谱 | `/graph` | 图谱搜索、邻居查询、可视化 |
+
+### 后续可扩展
+
+- 针对不同领域（法律/心理/话术/医疗）配置不同的展示视图
+- Chunk 详情查看与编辑
+- 批量导入工具界面
 
 多场景可应用性来自于：
 

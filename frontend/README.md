@@ -1,73 +1,122 @@
-# React + TypeScript + Vite
+# memRagAgent - Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+基于 React + TypeScript + Vite 的现代化管理界面。
 
-Currently, two official plugins are available:
+## 技术栈
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+- **框架**: React 18 + TypeScript
+- **构建**: Vite 6
+- **路由**: React Router 7
+- **样式**: CSS Variables (深色主题)
+- **HTTP**: Fetch API
 
-## React Compiler
+## 功能页面
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+| 页面 | 路径 | 功能 |
+|------|------|------|
+| 首页 | `/` | 系统概览 |
+| 认知对话 | `/cognitive` | AI 对话界面（流式） |
+| 创建记忆 | `/memories/create` | 手动创建记忆 |
+| 查询记忆 | `/memories/query` | 搜索和浏览记忆 |
+| 记忆清理 | `/memories/cleanup` | 批量删除记忆 |
+| 生成任务 | `/jobs` | 任务创建和执行 |
+| 用户画像 | `/profiles` | 画像查看和刷新 |
+| Memory RAG | `/rag` | 记忆 RAG 测试 |
+| Full Context | `/full-context` | 完整上下文测试 |
+| 知识集合 | `/knowledge/collections` | 集合管理 |
+| 知识文档 | `/knowledge/documents` | 文档管理和索引 |
+| Knowledge RAG | `/knowledge/rag` | 知识库 RAG 测试 |
+| 知识图谱 | `/graph` | 图谱可视化和搜索 |
+| 多租户管理 | `/tenants` | 租户/用户组/用户管理 |
+| 系统状态 | `/system` | 服务状态监控和功能测试 |
 
-## Expanding the ESLint configuration
+## 项目结构
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```
+frontend/
+├── src/
+│   ├── api/                 # API 客户端
+│   │   ├── cognitive.ts     # 认知对话 API
+│   │   ├── memory.ts        # 记忆 API
+│   │   ├── knowledge.ts     # 知识库 API
+│   │   ├── jobs.ts          # 任务 API
+│   │   ├── profiles.ts      # 画像 API
+│   │   └── rag.ts           # RAG API
+│   │
+│   ├── components/          # 可复用组件
+│   │   └── MemoizedList.tsx # Memoized 列表组件
+│   │
+│   ├── pages/               # 页面组件
+│   │   ├── CognitivePage.tsx
+│   │   ├── MemoryQueryPage.tsx
+│   │   ├── KnowledgeDocumentsPage.tsx
+│   │   ├── GraphPage.tsx
+│   │   └── ...
+│   │
+│   ├── App.tsx              # 主应用（路由+侧边栏）
+│   └── App.css              # 全局样式（深色主题）
+│
+├── index.html
+├── vite.config.ts
+└── package.json
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+## 快速开始
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+```bash
+# 安装依赖
+npm install
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+# 开发模式
+npm run dev
+# 访问 http://localhost:5173
+
+# 构建生产版本
+npm run build
+
+# 预览构建结果
+npm run preview
 ```
+
+## 配置
+
+### API 地址
+
+编辑 `src/api/http.ts` 修改后端地址：
+
+```typescript
+const BASE_URLS = {
+  memory: 'http://localhost:5000',
+  knowledge: 'http://localhost:5001',
+  agent: 'http://localhost:8000',
+}
+```
+
+## 设计特点
+
+### 深色主题
+- CSS Variables 定义颜色系统
+- 护眼的深色背景
+- 高对比度文字
+
+### 侧边栏导航
+- 分组菜单（对话/记忆/检索/知识库）
+- 当前页面高亮
+- 响应式布局
+
+### 性能优化
+- React.memo 优化列表渲染
+- 组件级代码分割
+- 按需加载
+
+## 开发路线
+
+- [x] 深色主题 UI
+- [x] 侧边栏导航
+- [x] 认知对话（流式）
+- [x] 记忆管理页面
+- [x] 知识库管理页面
+- [x] 图谱可视化
+- [x] React.memo 优化
+- [ ] 错误边界
+- [ ] 移动端适配

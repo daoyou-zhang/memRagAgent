@@ -165,6 +165,73 @@ class MemoryClient:
         return resp.json()
 
 
+    async def record_conversation(
+        self,
+        *,
+        user_id: Optional[str],
+        session_id: str,
+        project_id: Optional[str] = None,
+        raw_query: str,
+        optimized_query: Optional[str] = None,
+        intent: Optional[Dict[str, Any]] = None,
+        tool_used: Optional[str] = None,
+        tool_result: Optional[str] = None,
+        context_used: Optional[Dict[str, Any]] = None,
+        llm_response: str,
+        processing_time: float = 0,
+        auto_generate_memory: bool = True,
+    ) -> Dict[str, Any]:
+        """记录完整对话（统一由 memory 服务处理）
+        
+        调用 memRag 的 /api/conversations/record 接口。
+        memory 服务负责：
+        - 存储对话消息
+        - 创建记忆生成 Job
+        
+        Args:
+            user_id: 用户 ID
+            session_id: 会话 ID（必填）
+            project_id: 项目 ID
+            raw_query: 用户原始输入
+            optimized_query: RAG 优化后的查询
+            intent: 意图分析结果
+            tool_used: 使用的工具名称
+            tool_result: 工具结果摘要
+            context_used: 使用的上下文信息
+            llm_response: LLM 最终回复
+            processing_time: 处理耗时（秒）
+            auto_generate_memory: 是否自动生成记忆
+            
+        Returns:
+            记录结果
+        """
+        payload: Dict[str, Any] = {
+            "user_id": user_id,
+            "session_id": session_id,
+            "project_id": project_id,
+            "raw_query": raw_query,
+            "llm_response": llm_response,
+            "processing_time": processing_time,
+            "auto_generate_memory": auto_generate_memory,
+        }
+        if optimized_query:
+            payload["optimized_query"] = optimized_query
+        if intent:
+            payload["intent"] = intent
+        if tool_used:
+            payload["tool_used"] = tool_used
+        if tool_result:
+            payload["tool_result"] = tool_result
+        if context_used:
+            payload["context_used"] = context_used
+
+        url = f"{self.base_url}/api/conversations/record"
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(url, json=payload, timeout=30.0)
+        resp.raise_for_status()
+        return resp.json()
+
+
 _memory_client: Optional[MemoryClient] = None
 
 

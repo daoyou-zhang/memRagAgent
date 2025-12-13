@@ -16,6 +16,10 @@ CREATE TABLE memories (
     tags            JSONB,                      -- 字符串数组，如 ["preference","answer_style"]
     metadata        JSONB,                      -- 任意补充信息
 
+    -- 向量嵌入（合并自 memory_embeddings，减少 JOIN）
+    embedding       JSONB,                      -- 向量数组，如 [0.1, 0.2, ...]
+    embedding_model VARCHAR(64),                -- 向量模型名称
+
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     last_access_at  TIMESTAMPTZ,
     recall_count    INTEGER NOT NULL DEFAULT 0

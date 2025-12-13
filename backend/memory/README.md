@@ -117,24 +117,42 @@ memory/db/
 ## 环境变量
 
 ```bash
+# 数据库
+POSTGRES_HOST=localhost
+POSTGRES_PORT=5432
+POSTGRES_DB=memrag
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=your_password
+
+# Redis 缓存
+REDIS_URL=redis://:password@localhost:6379
+REDIS_ENABLED=true
+REDIS_CACHE_TTL=300
+
+# ChromaDB 向量存储
+USE_CHROMADB=true
+CHROMA_PERSIST_DIR=./chroma_data
+
 # LLM 配置
 API_MODEL_BASE=https://api.example.com/v1
 MODEL_NAME=qwen-plus
 API_MODEL_KEYS=sk-xxx
 
-# 数据库
-DATABASE_URL=postgresql://user:pass@host:5432/dbname
+# Embedding 配置
+EMBEDDINGS_NAME=embedding-3
+API_EMBEDDINGS_KEY=xxx
+API_EMBEDDINGS_BASE=https://api.example.com/v4
 
 # 功能开关
 JOB_SCHEDULER_ENABLED=true
 PROFILE_AUTO_REFRESH_ENABLED=true
 PROFILE_MIN_NEW_SEMANTIC_FOR_REFRESH=3
-PROFILE_ENABLE_KNOWLEDGE_EXTRACTION=true
+UNIFIED_MEMORY_GENERATION=true
 
-# 时间窗口（可选，限制任务执行时间）
-JOB_RUN_WINDOW_EPISODIC=00:00-23:59
-JOB_RUN_WINDOW_SEMANTIC=00:00-23:59
-JOB_RUN_WINDOW_PROFILE=02:00-06:00
+# 时间窗口（可选）
+JOB_RUN_WINDOW_EPISODIC=
+JOB_RUN_WINDOW_SEMANTIC=
+JOB_RUN_WINDOW_PROFILE=
 ```
 
 ## 启动服务
@@ -144,6 +162,37 @@ cd backend/memory
 python app.py
 # 服务运行在 http://localhost:5000
 ```
+
+## 性能优化
+
+### Redis 缓存
+- **Profile 缓存**: 10 分钟 TTL
+- **Embedding 缓存**: 1 小时 TTL
+- **RAG 结果缓存**: 5 分钟 TTL
+
+### 数据库连接池
+- `pool_size=10`
+- `max_overflow=20`
+- `pool_pre_ping=True`
+- `pool_recycle=300`
+
+### ChromaDB 向量检索
+- 批量写入支持
+- 自动 fallback 到 JSONB
+
+## 多租户支持
+
+新增租户管理 API (`/api/tenants`):
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/tenants` | 创建租户 |
+| GET | `/tenants` | 列出租户 |
+| POST | `/tenants/:id/groups` | 创建用户组 |
+| POST | `/tenants/:id/users` | 创建用户 |
+| POST | `/tenants/:id/api-keys` | 创建 API Key |
+| POST | `/auth/login` | 用户登录 |
+| POST | `/auth/verify-key` | 验证 API Key |
 
 ## 自我进化流程
 
@@ -159,8 +208,9 @@ python app.py
 - [x] 基础记忆 CRUD
 - [x] 语义记忆提取
 - [x] 用户画像聚合
+- [x] ChromaDB 向量检索
+- [x] Redis 缓存优化
+- [x] 多租户支持
 - [x] 知识洞察提取
-- [x] 自我反省记录
+- [ ] 单元测试
 - [ ] 知识推送到 knowledge 服务
-- [ ] 反省聚合分析
-- [ ] 策略自动优化

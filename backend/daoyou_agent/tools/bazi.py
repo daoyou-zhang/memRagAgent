@@ -258,19 +258,29 @@ def _get_lunar_day_name(day: int) -> str:
 
 def _generate_summary(result: Dict, birth_place: str) -> str:
     p, l, d = result["pillars"], result["lunar_date"], result["da_yun"]
-    s = f"性别：{chr(39)+'男' if result['gender'] == 'male' else '女'+chr(39)}\n"
+    s = f"性别：{'男' if result['gender'] == 'male' else '女'}\n"
     s += f"出生地点：{birth_place}\n公历出生时间：{result['solar_date']}\n"
     s += f"农历出生时间：{p['year']['gan']}{p['year']['zhi']}年{'闰' if l['is_leap'] else ''}{l['chinese_month']}月{l['chinese_day']}日{p['hour']['zhi']}时\n"
     s += f"八字：{p['year']['gan']}{p['year']['zhi']} {p['month']['gan']}{p['month']['zhi']} {p['day']['gan']}{p['day']['zhi']} {p['hour']['gan']}{p['hour']['zhi']}\n"
-    s += f"日主：{result['day_master']}\n大运起运年龄：{result['qiyun_age']}岁\n"
+    s += f"日主：{result['day_master']}\n"
+    s += f"起运年龄：{result['qiyun_age']}岁\n"
+    
     if d:
-        s += f"第一步大运：{d[0]['gan_zhi']}运\n"
+        # 完整大运列表
+        s += "\n【大运排列】（请严格使用以下数据，不要自行推算）\n"
         cy = datetime.now().year
+        current_dayun = None
         for i, dy in enumerate(d):
-            if dy["start_year"] > cy and i > 0:
-                s += f"当前大运：{d[i - 1]['gan_zhi']}运\n"
-                break
-    return s.replace("\n", "\n")
+            marker = ""
+            if dy["start_year"] <= cy < dy.get("end_year", dy["start_year"] + 10):
+                current_dayun = dy
+                marker = " ← 当前大运"
+            s += f"  {i+1}. {dy['gan_zhi']}运（{dy['start_age']}-{dy['end_age']}岁，{dy['start_year']}-{dy.get('end_year', dy['start_year']+10)}年）{marker}\n"
+        
+        if current_dayun:
+            s += f"\n当前所行大运：{current_dayun['gan_zhi']}运（{current_dayun['start_age']}-{current_dayun['end_age']}岁）\n"
+    
+    return s
 
 
 __all__ = ["calculate_bazi"]

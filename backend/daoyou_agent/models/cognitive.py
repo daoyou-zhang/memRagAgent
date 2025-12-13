@@ -69,6 +69,12 @@ class CognitiveRequest(BaseModel):
     response_system_prompt: Optional[str] = Field(None, description="回复生成系统 prompt")
     response_user_prompt: Optional[str] = Field(None, description="回复生成用户 prompt 模板")
 
+    # 用户自定义模型配置（可选，不传则使用环境变量默认配置）
+    model_config_override: Optional[Dict[str, Any]] = Field(
+        None, 
+        description="用户模型配置覆盖，支持字段: api_base, model_name, api_keys, max_tokens, temperature"
+    )
+
 
 class Intent(BaseModel):
     category: str = Field(..., description="意图类别")

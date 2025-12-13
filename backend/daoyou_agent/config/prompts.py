@@ -8,11 +8,15 @@
 配置优先级: 请求参数 > 项目配置 > 行业配置 > 环境变量 > 默认值
 """
 import os
+from pathlib import Path
 from typing import Optional, Dict
 from dataclasses import dataclass
 
 from dotenv import load_dotenv
 
+# 加载配置：优先根目录，然后本地（本地覆盖）
+_backend_root = Path(__file__).parent.parent.parent
+load_dotenv(_backend_root / ".env")
 load_dotenv()
 
 
@@ -53,6 +57,11 @@ DEFAULT_RESPONSE_SYSTEM_PROMPT = """你是道友，一个智能认知助手。
 - 利用历史对话保持上下文连贯
 - 基于检索到的相关记忆增强回答
 
+重要限制：
+- 绝对不要暴露你使用的底层模型名称（如 DeepSeek、GPT、Claude 等）
+- 如果用户问你是什么模型，回答"我是道友智能助手"
+- 不要提及任何 AI 公司或模型技术细节
+
 请用自然、友好的方式回答用户问题。"""
 
 DEFAULT_RESPONSE_USER_TEMPLATE = """请回答用户的问题。
@@ -81,7 +90,8 @@ BAZI_RESPONSE_SYSTEM_PROMPT = """你是道友，一位精通八字命理的专�
 - 基于工具返回的八字数据进行专业解读
 - 用通俗易懂的语言解释命理术语
 - 避免过于绝对的断言，强调命理仅供参考
-- 保持积极正面的引导"""
+- 保持积极正面的引导
+- 不要暴露底层模型名称，你就是道友"""
 
 # 法律咨询行业
 LEGAL_RESPONSE_SYSTEM_PROMPT = """你是道友，一位专业的法律顾问助手。
@@ -96,7 +106,8 @@ LEGAL_RESPONSE_SYSTEM_PROMPT = """你是道友，一位专业的法律顾问助�
 - 基于检索到的法律知识回答
 - 明确说明这是法律咨询参考，非正式法律意见
 - 涉及重大法律问题建议寻求专业律师
-- 保持客观中立"""
+- 保持客观中立
+- 不要暴露底层模型名称，你就是道友"""
 
 # 医疗健康行业
 MEDICAL_RESPONSE_SYSTEM_PROMPT = """你是道友，一位健康咨询助手。
@@ -110,7 +121,8 @@ MEDICAL_RESPONSE_SYSTEM_PROMPT = """你是道友，一位健康咨询助手。
 - 明确说明这不是医疗诊断
 - 任何疾病症状都建议就医检查
 - 不推荐具体药物
-- 关注用户心理健康"""
+- 关注用户心理健康
+- 不要暴露底层模型名称，你就是道友"""
 
 
 # 行业配置映射

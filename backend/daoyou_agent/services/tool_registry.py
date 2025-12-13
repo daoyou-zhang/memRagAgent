@@ -75,6 +75,52 @@ PRESET_TOOLS: Dict[str, ToolDefinition] = {
         enabled=True,
         priority=100,
     ),
+    
+    # 文件读取工具
+    "read_file": ToolDefinition(
+        name="read_file",
+        display_name="读取文件",
+        description="读取指定路径的代码/文本文件内容。支持 Python、JavaScript、TypeScript、Go、Java 等常见编程语言，以及 JSON、YAML、Markdown 等配置和文档文件。用于代码审查、问题排查、代码分析等场景。",
+        category=ToolCategory.UTILITY,
+        parameters={
+            "type": "object",
+            "required": ["file_path"],
+            "properties": {
+                "file_path": {"type": "string", "description": "文件的绝对路径或相对路径"},
+                "encoding": {"type": "string", "description": "文件编码", "default": "utf-8"},
+                "max_lines": {"type": "integer", "description": "最大读取行数（不填则读取全部）"},
+                "start_line": {"type": "integer", "description": "起始行号（1 开始）", "default": 1},
+            }
+        },
+        scope=ToolScope.SYSTEM,
+        handler_type=ToolHandlerType.LOCAL,
+        handler_config={"module": "daoyou_agent.tools.file_reader", "function": "read_file"},
+        enabled=True,
+        priority=90,
+    ),
+    
+    # 目录列表工具
+    "list_directory": ToolDefinition(
+        name="list_directory",
+        display_name="列出目录",
+        description="列出指定目录中的文件和子目录。支持通配符匹配和递归搜索。用于了解项目结构、查找文件等场景。",
+        category=ToolCategory.UTILITY,
+        parameters={
+            "type": "object",
+            "required": ["dir_path"],
+            "properties": {
+                "dir_path": {"type": "string", "description": "目录路径"},
+                "pattern": {"type": "string", "description": "文件匹配模式（如 *.py）", "default": "*"},
+                "recursive": {"type": "boolean", "description": "是否递归子目录", "default": False},
+                "max_items": {"type": "integer", "description": "最大返回数量", "default": 100},
+            }
+        },
+        scope=ToolScope.SYSTEM,
+        handler_type=ToolHandlerType.LOCAL,
+        handler_config={"module": "daoyou_agent.tools.file_reader", "function": "list_directory"},
+        enabled=True,
+        priority=85,
+    ),
 }
 
 

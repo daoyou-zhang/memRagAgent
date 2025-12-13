@@ -1526,3 +1526,147 @@ flowchart TD
    - 查询页支持服务健康状态展示、条件过滤和中文分页 UI。
 
 这份文档可以作为后续开发（RAG、Profiles、多 Agent 集成）时的参考，也方便新人快速理解当前 Memory 控制台的设计与实现过程。
+
+---
+
+## 8. Prompt 自进化系统
+
+### 8.1 架构设计
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  prompts.py（系统级 - 进化原则/基因）                         │
+│  - 默认 prompt 模板                                          │
+│  - 不同行业的基础规则                                        │
+│  - 很少变动，变动需人工审核                                   │
+└─────────────────────────────────────────────────────────────┘
+                            ↓ 继承/覆盖
+┌─────────────────────────────────────────────────────────────┐
+│  prompt_configs 表（用户/项目级 - 个性化定制）                 │
+│  - 针对特定用户/项目的 prompt 微调                            │
+│  - 可自动进化优化                                            │
+│  - 优先级高于 prompts.py                                     │
+└─────────────────────────────────────────────────────────────┘
+                            ↓ 记录变更
+┌─────────────────────────────────────────────────────────────┐
+│  prompt_evolution_history 表（进化历史）                      │
+│  - 每次优化的 before/after                                   │
+│  - trigger_type: profile_aggregate / reflection_low_score    │
+│  - 效果评估                                                  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 8.2 触发流程
+
+```
+对话结束
+    ↓
+memory 服务处理
+    ├── episodic_summary → 情节记忆
+    ├── semantic_extract → 语义记忆
+    ├── profile_aggregate → 用户画像
+    │       ↓
+    │   LLM 顺便返回:
+    │   {
+    │     "result": { profile... },
+    │     "meta": {
+    │       "prompt_suggestions": [
+    │         {"prompt_type": "response_system", "suggestion": "..."}
+    │       ]
+    │     }
+    │   }
+    │       ↓
+    │   根据 suggestions 记录到 prompt_evolution_history
+    │
+    └── knowledge_extract → 知识提取
+```
+
+### 8.3 API 接口
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/prompt-evolution/pending` | 获取待处理建议 |
+| POST | `/api/prompt-evolution/{id}/apply` | 应用建议 |
+| POST | `/api/prompt-evolution/{id}/reject` | 拒绝建议 |
+| POST | `/api/prompt-evolution/{id}/evaluate` | 更新效果评估 |
+| POST | `/api/prompt-evolution/process` | 处理 LLM 返回的建议 |
+
+### 8.4 数据库表
+
+```sql
+-- prompt_evolution_history
+CREATE TABLE prompt_evolution_history (
+    id SERIAL PRIMARY KEY,
+    user_id VARCHAR(64),
+    project_id VARCHAR(128),
+    category VARCHAR(32),
+    trigger_type VARCHAR(32) NOT NULL,  -- profile_aggregate/reflection_low_score/manual
+    trigger_reason TEXT,
+    prompt_type VARCHAR(32) NOT NULL,   -- intent_system/response_system/response_user
+    before_prompt TEXT,
+    after_prompt TEXT,
+    suggestion TEXT,
+    status VARCHAR(32) DEFAULT 'pending',  -- pending/applied/rejected/reverted
+    evaluation_score FLOAT,
+    evaluation_count INT DEFAULT 0,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+```
+
+### 8.5 ENV 配置
+
+```bash
+# Prompt 自进化开关（有风险，默认关闭）
+PROMPT_EVOLUTION_ENABLED=false
+
+# 统一记忆生成开关（合并 episodic + semantic 为一次 LLM 调用，默认开启）
+UNIFIED_MEMORY_GENERATION=true
+```
+
+---
+
+## 9. 统一记忆生成优化
+
+### 9.1 优化前后对比
+
+| 场景 | 优化前 | 优化后 |
+|------|--------|--------|
+| 每次对话记忆生成 | 2-3 次 LLM 调用 | **1 次 LLM 调用** |
+| 流式响应 | 不受影响 | 不受影响 |
+| 功能完整性 | episodic + semantic 分开 | episodic + semantic + prompt建议 合并 |
+
+### 9.2 Job 类型
+
+| job_type | 说明 | LLM 调用次数 |
+|----------|------|-------------|
+| `unified_memory` | 统一生成（默认） | 1 次 |
+| `episodic_summary` | 仅情节记忆 | 1 次 |
+| `semantic_extract` | 仅语义记忆 | 1 次 |
+| `profile_aggregate` | 画像聚合 | 1 次 |
+
+### 9.3 流程图
+
+```
+对话结束
+    ↓
+POST /api/conversations/record
+    ↓
+创建 unified_memory Job（如果 UNIFIED_MEMORY_GENERATION=true）
+    ↓
+调度器执行 Job
+    ↓
+generate_memories_unified() ← 一次 LLM 调用
+    ↓
+返回：
+{
+  "episodic": "情节总结...",
+  "semantic": [{text, category, tags}...],
+  "should_update_profile": true/false,
+  "prompt_suggestions": [{prompt_type, suggestion}...]  // 仅当 PROMPT_EVOLUTION_ENABLED=true
+}
+    ↓
+├── 存储 episodic 记忆 + embedding
+├── 存储 semantic 记忆 + embedding
+├── 记录 prompt 建议（如果有）
+└── 自动创建 profile Job（如果 should_update_profile=true）
+```

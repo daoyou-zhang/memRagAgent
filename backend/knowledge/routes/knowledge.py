@@ -1,10 +1,19 @@
 from __future__ import annotations
 
-from flask import Blueprint, jsonify, request
-from sqlalchemy.orm import Session
+import os
+import sys
+import math
+import hashlib
 from datetime import datetime
 from zoneinfo import ZoneInfo
-import math
+from pathlib import Path
+
+from flask import Blueprint, jsonify, request
+from loguru import logger
+from sqlalchemy.orm import Session
+
+# 添加 shared 模块路径
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from repository.db_session import SessionLocal
 from models.knowledge import KnowledgeCollection, KnowledgeDocument, KnowledgeChunk
@@ -12,6 +21,21 @@ from processing.text_processing import TextProcessor
 from processing.embedding_processing import generate_embeddings_batch
 
 knowledge_bp = Blueprint("knowledge", __name__)
+
+
+def _get_cache_service():
+    """获取缓存服务（失败返回 None）"""
+    try:
+        from shared.cache import get_cache_service
+        return get_cache_service()
+    except Exception:
+        return None
+
+
+def _knowledge_query_hash(query: str, project_id: str = None, domain: str = None) -> str:
+    """生成知识库查询哈希"""
+    key = f"kn:{query}:{project_id or ''}:{domain or ''}"
+    return hashlib.md5(key.encode()).hexdigest()[:16]
 
 from .graph import graph_bp  # noqa: E402
 
@@ -278,6 +302,18 @@ def knowledge_rag_query():
     if not query_text:
         return jsonify({"error": "field 'query' is required"}), 400
 
+    # 尝试从 Redis 缓存获取
+    cache = _get_cache_service()
+    cache_key = _knowledge_query_hash(query_text, project_id, domain)
+    if cache:
+        cached_result = cache.get(f"memrag:krag:{cache_key}")
+        if cached_result:
+            logger.debug(f"[Knowledge RAG] Cache hit for query: {query_text[:30]}...")
+            return jsonify({
+                "used_chunks": cached_result,
+                "debug": {"from_cache": True},
+            })
+
     # tags 约束（可选）：
     # - required_tags：必须全部包含，若导致候选集为空会自动回退为不使用必选标签；
     # - preferred_tags：命中则在向量相似度基础上稍作加分，对无标签数据无任何影响。
@@ -415,7 +451,13 @@ def knowledge_rag_query():
             "top_k": top_k,
             "avg_similarity_top_k": total_sim / len(top_candidates) if top_candidates else 0.0,
             "avg_score_top_k": total_score / len(top_candidates) if top_candidates else 0.0,
+            "from_cache": False,
         }
+
+        # 写入缓存
+        if cache and used_chunks:
+            cache.set(f"memrag:krag:{cache_key}", used_chunks, 300)  # 5 min TTL
+            logger.debug(f"[Knowledge RAG] Cached {len(used_chunks)} results")
 
         return jsonify({"used_chunks": used_chunks, "debug": debug_info})
     finally:
@@ -728,5 +770,115 @@ def list_chunks(document_id: int):
             )
 
         return jsonify({"items": items})
+    finally:
+        db.close()
+
+
+@knowledge_bp.post("/chunks/ingest")
+def ingest_chunk():
+    """直接写入单个知识块（用于知识沉淀）
+    
+    请求体:
+    {
+        "collection_id": 1,          // 目标集合 ID（可选，如无则自动创建）
+        "domain": "test_experience", // 领域
+        "text": "知识内容...",
+        "tags": ["tag1", "tag2"],
+        "embedding": [0.1, 0.2, ...],  // 可选，已预计算的向量
+        "importance": 0.8,
+        "metadata": {...}
+    }
+    """
+    from processing.embedding_processing import generate_embeddings_batch
+    
+    payload = request.get_json(force=True) or {}
+    
+    collection_id = payload.get("collection_id")
+    domain = payload.get("domain", "experience")
+    text = (payload.get("text") or "").strip()
+    tags = payload.get("tags")
+    embedding = payload.get("embedding")
+    importance = float(payload.get("importance", 0.5))
+    metadata = payload.get("metadata") or {}
+    
+    if not text:
+        return jsonify({"error": "field 'text' is required"}), 400
+    
+    db: Session = SessionLocal()
+    try:
+        # 1. 获取或创建集合
+        if collection_id:
+            col = db.query(KnowledgeCollection).filter(
+                KnowledgeCollection.id == collection_id
+            ).first()
+            if not col:
+                return jsonify({"error": f"collection {collection_id} not found"}), 404
+        else:
+            # 按 domain 查找或创建
+            col = db.query(KnowledgeCollection).filter(
+                KnowledgeCollection.domain == domain
+            ).first()
+            if not col:
+                col = KnowledgeCollection(
+                    name=f"{domain}_auto",
+                    domain=domain,
+                    description=f"Auto-created collection for {domain}",
+                )
+                db.add(col)
+                db.flush()
+        
+        # 2. 创建虚拟文档（用于组织 chunks）
+        doc_title = metadata.get("source", "insight") + f"_{col.id}"
+        doc = db.query(KnowledgeDocument).filter(
+            KnowledgeDocument.collection_id == col.id,
+            KnowledgeDocument.title == doc_title,
+        ).first()
+        
+        if not doc:
+            doc = KnowledgeDocument(
+                collection_id=col.id,
+                title=doc_title,
+                source_uri="knowledge_insight",
+                status="indexed",
+            )
+            db.add(doc)
+            db.flush()
+        
+        # 3. 生成 embedding（如果没有传入）
+        if not embedding:
+            try:
+                emb_list = generate_embeddings_batch([text])
+                embedding = emb_list[0] if emb_list else None
+            except Exception:
+                pass
+        
+        # 4. 获取 chunk_index
+        max_idx = db.query(KnowledgeChunk.chunk_index).filter(
+            KnowledgeChunk.document_id == doc.id
+        ).order_by(KnowledgeChunk.chunk_index.desc()).first()
+        chunk_index = (max_idx[0] + 1) if max_idx else 0
+        
+        # 5. 创建 chunk
+        chunk = KnowledgeChunk(
+            document_id=doc.id,
+            chunk_index=chunk_index,
+            section_label=metadata.get("category"),
+            text=text,
+            tags=tags,
+            embedding=embedding,
+            importance=importance,
+            extra_metadata=metadata,
+        )
+        db.add(chunk)
+        db.commit()
+        db.refresh(chunk)
+        
+        return jsonify({
+            "success": True,
+            "chunk_id": chunk.id,
+            "collection_id": col.id,
+            "document_id": doc.id,
+        }), 201
+        
     finally:
         db.close()

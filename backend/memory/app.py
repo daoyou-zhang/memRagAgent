@@ -11,6 +11,9 @@ from routes import memory_bp
 from routes.profiles import profiles_bp
 from routes.rag import rag_bp
 from routes.knowledge import knowledge_bp
+from routes.conversations import conversations_bp
+from routes.prompt_evolution import prompt_evolution_bp
+from routes.tenants import tenants_bp
 from repository.db_session import init_db, SessionLocal
 from models.memory import MemoryGenerationJob
 
@@ -56,9 +59,12 @@ def _job_scheduler_tick(base_url: str) -> None:
     now_t = datetime.now().time()
 
     type_windows: dict[str, tuple[dtime, dtime] | None] = {
+        # 精简：主要使用 unified_memory，保留旧类型向后兼容
+        "unified_memory": _parse_window(JOB_RUN_WINDOW_EPISODIC),  # 统一记忆生成
+        "profile_aggregate": _parse_window(JOB_RUN_WINDOW_PROFILE),
+        # 向后兼容（逐步废弃）
         "episodic_summary": _parse_window(JOB_RUN_WINDOW_EPISODIC),
         "semantic_extract": _parse_window(JOB_RUN_WINDOW_SEMANTIC),
-        "profile_aggregate": _parse_window(JOB_RUN_WINDOW_PROFILE),
     }
 
     db = SessionLocal()
@@ -126,6 +132,15 @@ def create_app() -> Flask:
 
     # 注册知识洞察蓝图，挂载到 /api/knowledge
     app.register_blueprint(knowledge_bp, url_prefix="/api/knowledge")
+
+    # 注册对话记录蓝图，挂载到 /api/conversations
+    app.register_blueprint(conversations_bp, url_prefix="/api/conversations")
+
+    # 注册 Prompt 进化蓝图，挂载到 /api/prompt-evolution
+    app.register_blueprint(prompt_evolution_bp, url_prefix="/api/prompt-evolution")
+
+    # 注册租户管理蓝图，挂载到 /api（路由内部已有 /tenants 等前缀）
+    app.register_blueprint(tenants_bp, url_prefix="/api")
 
     # 启动基于 env 控制的 Job 调度线程（只负责调用已有 /jobs/<id>/run 接口）
     _start_job_scheduler(app)

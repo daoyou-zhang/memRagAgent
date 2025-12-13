@@ -166,11 +166,18 @@ def push_to_knowledge_service():
     请求体:
     {
         "project_id": "yyy",
-        "insight_ids": [1, 2, 3]  // 可选，不传则推送所有 approved 的
+        "collection_id": 1,        // 目标知识集合 ID
+        "domain": "test_experience", // 领域标识
+        "insight_ids": [1, 2, 3]   // 可选，不传则推送所有 approved 的
     }
     """
+    import httpx
+    from embeddings_client import generate_embedding
+    
     data = request.get_json() or {}
     project_id = data.get("project_id")
+    collection_id = data.get("collection_id")
+    domain = data.get("domain", "experience")
     insight_ids = data.get("insight_ids")
     
     knowledge_service_url = os.getenv("KNOWLEDGE_SERVICE_URL", "http://127.0.0.1:5001")
@@ -191,23 +198,59 @@ def push_to_knowledge_service():
         if not insights:
             return jsonify({"message": "没有待推送的知识洞察", "pushed_count": 0})
         
-        # TODO: 调用 knowledge 服务 API 推送知识
-        # 这里先模拟推送成功
         pushed_count = 0
+        failed_count = 0
+        errors = []
+        
         for insight in insights:
-            # 实际推送逻辑：
-            # response = requests.post(f"{knowledge_service_url}/api/knowledge/ingest", json={...})
-            
-            insight.pushed_to_knowledge = True
-            insight.pushed_at = datetime.now()
-            insight.status = "pushed"
-            pushed_count += 1
+            try:
+                # 1. 生成 embedding
+                embedding = None
+                try:
+                    embedding = generate_embedding(insight.content)
+                except Exception:
+                    pass
+                
+                # 2. 调用 knowledge 服务创建 chunk
+                chunk_data = {
+                    "collection_id": collection_id,
+                    "domain": domain,
+                    "text": insight.content,
+                    "tags": insight.tags or [],
+                    "embedding": embedding,
+                    "importance": insight.confidence,
+                    "metadata": {
+                        "source": "knowledge_insight",
+                        "insight_id": insight.id,
+                        "category": insight.category,
+                        "project_id": insight.project_id,
+                    }
+                }
+                
+                with httpx.Client(timeout=30) as client:
+                    resp = client.post(
+                        f"{knowledge_service_url}/api/knowledge/chunks/ingest",
+                        json=chunk_data
+                    )
+                    resp.raise_for_status()
+                
+                # 3. 更新状态
+                insight.pushed_to_knowledge = True
+                insight.pushed_at = datetime.now()
+                insight.status = "pushed"
+                pushed_count += 1
+                
+            except Exception as e:
+                failed_count += 1
+                errors.append(f"insight {insight.id}: {str(e)}")
         
         db.commit()
         
         return jsonify({
             "success": True,
             "pushed_count": pushed_count,
+            "failed_count": failed_count,
+            "errors": errors[:5] if errors else [],
             "message": f"已推送 {pushed_count} 条知识到知识库",
         })
     finally:

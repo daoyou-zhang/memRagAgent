@@ -36,7 +36,7 @@ from ..models.cognitive import (
 from ..config.prompts import get_prompt_config, get_prompt_for_context, PromptConfig
 from ..models.mcp_tool import ToolResult
 from .context_aggregator import get_context_aggregator
-from .ai_service_adapter import get_intent_client, get_response_client, LLMClient
+from .ai_service_adapter import get_intent_client, get_response_client, get_ai_service, LLMClient, LLMConfig
 from .memory_client import get_memory_client
 from .tool_orchestrator import get_tool_orchestrator
 
@@ -68,6 +68,25 @@ class CognitiveController:
             response_system=request.response_system_prompt,
             response_user=request.response_user_prompt,
         )
+
+    def _get_response_client(self, request: CognitiveRequest) -> LLMClient:
+        """获取回复生成客户端，支持用户自定义模型配置。
+        
+        如果请求包含 model_config_override，则创建使用用户配置的客户端。
+        否则使用默认的 response_client。
+        
+        支持的配置字段:
+        - api_base: API 地址（如 https://api.openai.com/v1）
+        - model_name: 模型名称（如 gpt-4, deepseek-v3）
+        - api_keys: API 密钥
+        - max_tokens: 最大 token 数
+        - temperature: 温度参数
+        """
+        if request.model_config_override:
+            user_config = LLMConfig.from_dict(request.model_config_override)
+            logger.info(f"使用用户自定义模型: {user_config.model_name} @ {user_config.api_base}")
+            return get_ai_service(user_config)
+        return self.response_client
 
     async def _understand_intent(
         self,
@@ -190,6 +209,28 @@ class CognitiveController:
                 rag_items.append(f"  - [相关度:{score:.2f}] {content}")
             rag_section = "【相关记忆】\n" + "\n".join(rag_items)
 
+        # 知识库检索结果
+        knowledge_section = ""
+        knowledge_chunks = cognitive_context.get("knowledge_chunks") or []
+        if knowledge_chunks:
+            knowledge_items = []
+            for k in knowledge_chunks[:5]:  # top 5
+                text = k.get("text", "")[:400]
+                score = k.get("score", 0)
+                domain = k.get("domain", "")
+                label = k.get("section_label", "")
+                prefix = f"[{domain}]" if domain else ""
+                if label:
+                    prefix = f"{prefix}[{label}]"
+                knowledge_items.append(f"  - {prefix}[得分:{score:.2f}] {text}")
+            knowledge_section = "【知识库参考】\n" + "\n".join(knowledge_items)
+
+        # 知识图谱上下文
+        graph_section = ""
+        graph_context = cognitive_context.get("graph_context")
+        if graph_context and isinstance(graph_context, str) and graph_context.strip():
+            graph_section = f"【知识图谱】\n{graph_context}"
+
         # 构建工具结果段落
         tool_section = ""
         if tool_result:
@@ -202,6 +243,14 @@ class CognitiveController:
             memory_section=memory_section,
             rag_section=rag_section,
         )
+        
+        # 添加知识图谱（如果有）
+        if graph_section:
+            base_prompt = f"{graph_section}\n\n{base_prompt}"
+        
+        # 添加知识库内容（如果有）
+        if knowledge_section:
+            base_prompt = f"{knowledge_section}\n\n{base_prompt}"
         
         # 如果有工具结果，添加到 prompt 中
         if tool_section:
@@ -299,31 +348,40 @@ class CognitiveController:
             {"role": "user", "content": user_prompt},
         ]
 
-        ai_text = await self.response_client.generate(messages, temperature=0.5)
+        # 获取回复客户端（支持用户自定义模型）
+        response_client = self._get_response_client(request)
+        ai_text = await response_client.generate(messages, temperature=0.5)
 
         processing_time = (datetime.now() - start_time).total_seconds()
 
+        # 获取实际使用的模型名称
+        model_name = response_client.config.model_name if response_client.config else "default"
+        
         response = CognitiveResponse(
             content=ai_text,
             intent=intent,
             confidence=intent.confidence,
             processing_time=processing_time,
-            ai_service_used="daoyou-ai-service",
+            ai_service_used=f"daoyou-ai-service/{model_name}",
             tokens_used=0,
             session_id=session_id,
             user_id=request.user_id,
             tool_used=tool_result.tool_name if tool_result else None,
         )
 
-        # 5. 学习闭环
+        # 5. 学习闭环（统一由 memory 服务处理）
         if request.enable_learning:
             try:
-                await self._learn_from_interaction(request, response.content, session_id)
+                await self._learn_from_interaction(
+                    request=request,
+                    response_text=response.content,
+                    session_id=session_id,
+                    intent=intent,
+                    tool_result=tool_result,
+                    processing_time=processing_time,
+                )
             except Exception as exc:
                 logger.error(f"交互学习失败: {exc}")
-
-        # 6. 自反省（已集成到 memory profile 聚合流程，此处不单独调用）
-        # 反省逻辑由 memRag 的 profile_job 统一处理，避免额外 LLM 调用
 
         logger.info(
             f"认知处理完成: session_id={session_id}, 耗时={processing_time:.2f}秒, tool={response.tool_used}"
@@ -402,21 +460,34 @@ class CognitiveController:
                 {"role": "user", "content": user_prompt},
             ]
             
-            # 5. 流式生成回复
+            # DEBUG: 打印发送给 LLM 的 prompt
+            logger.debug(f"=== 发送给 LLM 的 User Prompt ===\n{user_prompt[:2000]}{'...(截断)' if len(user_prompt) > 2000 else ''}")
+            
+            # 5. 流式生成回复（支持用户自定义模型）
+            response_client = self._get_response_client(request)
             full_content = ""
-            async for chunk in self.response_client.generate_stream(messages, temperature=0.5):
+            async for chunk in response_client.generate_stream(messages, temperature=0.5):
                 full_content += chunk
                 yield f"event: content\ndata: {json.dumps({'text': chunk}, ensure_ascii=False)}\n\n"
             
-            # 6. 学习闭环（异步，不阻塞）
+            # 6. 计算处理时间
+            processing_time = (datetime.now() - start_time).total_seconds()
+            
+            # 7. 学习闭环（统一由 memory 服务处理）
             if request.enable_learning and full_content:
                 try:
-                    await self._learn_from_interaction(request, full_content, session_id)
+                    await self._learn_from_interaction(
+                        request=request,
+                        response_text=full_content,
+                        session_id=session_id,
+                        intent=intent,
+                        tool_result=tool_result,
+                        processing_time=processing_time,
+                    )
                 except Exception as exc:
                     logger.error(f"交互学习失败: {exc}")
             
-            # 7. 发送完成事件
-            processing_time = (datetime.now() - start_time).total_seconds()
+            # 8. 发送完成事件
             done_data = {
                 "session_id": session_id,
                 "processing_time": processing_time,
@@ -435,52 +506,39 @@ class CognitiveController:
         request: CognitiveRequest,
         response_text: str,
         session_id: str,
+        intent: Optional[Intent] = None,
+        tool_result: Optional[ToolResult] = None,
+        processing_time: float = 0,
     ) -> None:
-        """精简版交互学习逻辑，基于 memRag 的 Memory REST API。
+        """统一对话记录，由 memory 服务处理所有存储逻辑。
 
-        当前实现：
-        - 将本轮对话写入一条 episodic 记忆；
-        - 调用 profile auto job，根据 semantic 增量决定是否聚合用户画像。
+        调用 memory 服务的 /api/conversations/record 接口，传递：
+        - 原始问题、意图、工具结果、上下文、LLM 回复
+        - memory 服务负责存储对话、生成记忆、触发画像聚合
         """
-
-        if not request.user_id:
-            return
-
         memory_client = get_memory_client()
 
-        # 1) 存一条情节记忆，记录本轮问答内容
-        episodic_content = f"用户询问: {request.input}\n系统回复: {response_text}"
-
-        metadata: Dict[str, Any] = {
-            "query": request.input,
-            "response": response_text,
-            "session_id": session_id,
-            "timestamp": datetime.now().isoformat(),
-        }
-
         try:
-            await memory_client.create_memory(
-                text=episodic_content,
+            result = await memory_client.record_conversation(
                 user_id=request.user_id,
-                project_id=getattr(request, "project_id", None),
-                mem_type="episodic",
-                source="daoyou_interaction",
-                importance=0.6,
-                tags=["interaction", "dialogue"],
-                metadata=metadata,
-            )
-        except Exception as exc:
-            logger.error(f"存储情节记忆失败: {exc}")
-
-        # 2) 触发画像聚合的自动 Job（内部会根据 semantic 增量判断是否需要新建）
-        try:
-            await memory_client.create_profile_job_auto(
-                user_id=request.user_id,
-                project_id=getattr(request, "project_id", None),
                 session_id=session_id,
+                project_id=request.project_id,
+                raw_query=request.input,
+                intent={
+                    "category": intent.category,
+                    "confidence": intent.confidence,
+                    "needs_tool": intent.needs_tool,
+                    "summary": intent.summary,
+                } if intent else None,
+                tool_used=tool_result.tool_name if tool_result else None,
+                tool_result=str(tool_result.result)[:1000] if tool_result and tool_result.result else None,
+                llm_response=response_text,
+                processing_time=processing_time,
+                auto_generate_memory=True,
             )
+            logger.debug(f"对话已记录到 memory 服务: {result}")
         except Exception as exc:
-            logger.error(f"创建画像聚合任务失败: {exc}")
+            logger.error(f"记录对话失败: {exc}")
 
 
 _cognitive_controller_instance: Optional[CognitiveController] = None

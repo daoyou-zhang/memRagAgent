@@ -16,6 +16,11 @@ API_MODEL_KEYS = os.getenv("API_MODEL_KEYS", "")
 MODEL_MAX_TOKENS = int(os.getenv("MODEL_MAX_TOKENS", "600"))
 MODEL_TEMPERATURE = float(os.getenv("MODEL_TEMPERATURE", "0.5"))
 
+# Prompt 自进化开关（有风险，默认关闭）
+PROMPT_EVOLUTION_ENABLED = os.getenv("PROMPT_EVOLUTION_ENABLED", "false").lower() in {"1", "true", "yes"}
+# 统一记忆生成开关（合并 episodic + semantic + prompt suggestions 为一次 LLM 调用）
+UNIFIED_MEMORY_GENERATION = os.getenv("UNIFIED_MEMORY_GENERATION", "true").lower() in {"1", "true", "yes"}
+
 
 def _get_api_key() -> str:
     # 简单策略：从逗号分隔的 key 列表中取第一个非空 key
@@ -457,4 +462,110 @@ def generate_profile_with_reflection(
         "profile": generate_profile_from_semantics(user_id, project_id, semantic_items),
         "reflection_summary": None,
         "knowledge_insights": [],
+    }
+
+
+def generate_memories_unified(
+    session_id: str,
+    conversation_text: str,
+    user_id: str | None = None,
+    project_id: str | None = None,
+    include_prompt_suggestions: bool = False,
+) -> Dict[str, Any]:
+    """统一记忆生成：一次 LLM 调用同时生成 episodic + semantic + prompt 建议
+    
+    优化：原来需要 2-3 次 LLM 调用，现在合并为 1 次
+    
+    Args:
+        session_id: 会话 ID
+        conversation_text: 对话内容
+        user_id: 用户 ID
+        project_id: 项目 ID
+        include_prompt_suggestions: 是否包含 prompt 优化建议（受 PROMPT_EVOLUTION_ENABLED 控制）
+    
+    Returns:
+        {
+            "episodic": "情节总结文本",
+            "semantic": [{"text": "...", "category": "...", "tags": [...]}],
+            "prompt_suggestions": [{"prompt_type": "...", "suggestion": "..."}]  # 可选
+        }
+    """
+    if len(conversation_text) > 4000:
+        conversation_text = conversation_text[-4000:]
+    
+    # 是否真正启用 prompt 建议
+    enable_prompt_suggestions = include_prompt_suggestions and PROMPT_EVOLUTION_ENABLED
+    
+    prompt_suggestion_part = ""
+    if enable_prompt_suggestions:
+        prompt_suggestion_part = """
+4) prompt_suggestions: 数组（可选），如果发现当前系统 prompt 不太适合该用户，给出优化建议：
+   - prompt_type: 建议修改的 prompt 类型（response_system / intent_system）
+   - suggestion: 具体建议（如"用户喜欢简洁回复，建议精简答案"）
+   如果没有建议，返回空数组 []。"""
+
+    system_prompt = f"""你是一个智能记忆管理助手，负责从对话中提取多种类型的记忆。
+
+请分析对话内容，一次性返回以下内容（JSON 格式）：
+
+1) episodic: 字符串，情节总结（2-4句话），描述这次对话主要做了什么、关键决策
+2) semantic: 数组，提取的长期记忆（用户偏好、事实），每条包含：
+   - text: 一句话结论
+   - category: 分类（identity_profile/communication_style/interests/work_style/values）
+   - tags: 标签数组
+   - importance: 重要性 0.5-1.0
+3) should_update_profile: 布尔值，是否建议更新用户画像（semantic 有重要发现时为 true）
+{prompt_suggestion_part}
+
+输出示例：
+{{
+  "episodic": "用户咨询了八字命理，讨论了大运走势...",
+  "semantic": [
+    {{"text": "用户对命理感兴趣", "category": "interests", "tags": ["interest:divination"], "importance": 0.7}}
+  ],
+  "should_update_profile": false,
+  "prompt_suggestions": []
+}}
+
+注意：
+- 如果对话信息不足，semantic 可以返回空数组
+- 不要编造与对话无关的内容
+- 只输出 JSON，不要其他文字"""
+
+    user_prompt = f"""请分析以下对话，提取记忆：
+
+会话 ID: {session_id}
+用户 ID: {user_id or "未知"}
+项目 ID: {project_id or "未知"}
+
+【对话内容】
+{conversation_text}
+
+请只输出 JSON："""
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+    
+    raw = chat_completion(messages, max_tokens=1000)
+    
+    try:
+        data = json.loads(raw)
+        if isinstance(data, dict):
+            return {
+                "episodic": data.get("episodic", ""),
+                "semantic": data.get("semantic", []),
+                "should_update_profile": data.get("should_update_profile", False),
+                "prompt_suggestions": data.get("prompt_suggestions", []) if enable_prompt_suggestions else [],
+            }
+    except json.JSONDecodeError:
+        pass
+    
+    # 解析失败时的降级处理
+    return {
+        "episodic": "",
+        "semantic": [],
+        "should_update_profile": False,
+        "prompt_suggestions": [],
     }

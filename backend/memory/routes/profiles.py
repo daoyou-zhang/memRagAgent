@@ -1,13 +1,27 @@
 import os
+import sys
+from pathlib import Path
 
 from flask import Blueprint, jsonify, request
 from sqlalchemy.orm import Session
+
+# 添加 shared 模块路径
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from repository.db_session import SessionLocal
 from models.memory import Memory, Profile, KnowledgeInsight
 from llm_client import generate_profile_from_semantics, generate_profile_with_reflection
 
 profiles_bp = Blueprint("profiles", __name__)
+
+
+def _get_cache_service():
+    """获取缓存服务（失败返回 None）"""
+    try:
+        from shared.cache import get_cache_service
+        return get_cache_service()
+    except Exception:
+        return None
 
 
 @profiles_bp.get("/<user_id>")
@@ -28,6 +42,18 @@ def get_profile(user_id: str):
     min_new_semantic_for_refresh = int(
         os.getenv("PROFILE_MIN_NEW_SEMANTIC_FOR_REFRESH", "3")
     )
+
+    # 尝试从 Redis 获取缓存（最快）
+    if not force_refresh:
+        cache = _get_cache_service()
+        if cache:
+            cached_profile = cache.get_profile(user_id, project_id or "")
+            if cached_profile:
+                return jsonify({
+                    "profile": cached_profile,
+                    "semantic_items": [],
+                    "from_cache": "redis",
+                })
 
     db: Session = SessionLocal()
     try:
@@ -131,6 +157,12 @@ def get_profile(user_id: str):
                         db.add(ki)
                 
                 db.commit()
+        
+        # 写入 Redis 缓存
+        if aggregated_profile:
+            cache = _get_cache_service()
+            if cache:
+                cache.set_profile(user_id, project_id or "", aggregated_profile)
 
         return jsonify(
             {

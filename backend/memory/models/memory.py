@@ -9,6 +9,7 @@ from sqlalchemy import (
     Text,
     Float,
     DateTime,
+    Boolean,
     func,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -40,6 +41,10 @@ class Memory(Base):
     # 如果当前不是 Postgres，可以把 JSONB 换成 Text 手动存 JSON 字符串
     tags: Mapped[Optional[Any]] = mapped_column(JSONB, nullable=True)
     extra_metadata: Mapped[Optional[Any]] = mapped_column("metadata", JSONB, nullable=True)
+    
+    # 向量嵌入（合并自 memory_embeddings，减少 JOIN）
+    embedding: Mapped[Optional[Any]] = mapped_column(JSONB, nullable=True)
+    embedding_model: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -120,13 +125,13 @@ class ConversationSession(Base):
     closed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     auto_episodic_enabled: Mapped[bool] = mapped_column(
-        Integer, nullable=False, default=1
+        Boolean, nullable=False, default=True
     )
     auto_semantic_enabled: Mapped[bool] = mapped_column(
-        Integer, nullable=False, default=1
+        Boolean, nullable=False, default=True
     )
     auto_profile_enabled: Mapped[bool] = mapped_column(
-        Integer, nullable=False, default=0
+        Boolean, nullable=False, default=False
     )
 
 
@@ -235,5 +240,37 @@ class SelfReflection(Base):
     tool_used: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class PromptEvolutionHistory(Base):
+    """Prompt 自进化历史记录"""
+    __tablename__ = "prompt_evolution_history"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    user_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    project_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    category: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+
+    trigger_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    trigger_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    trigger_job_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    prompt_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    before_prompt: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    after_prompt: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    suggestion: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    applied_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    evaluation_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    evaluation_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

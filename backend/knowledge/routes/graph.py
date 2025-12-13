@@ -1,11 +1,33 @@
 from __future__ import annotations
 
+import sys
+import hashlib
+from pathlib import Path
+
 from flask import Blueprint, jsonify, request, Response
+from loguru import logger
+
+# 添加 shared 模块路径
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from tools.graph_client import get_neo4j_driver
 
 
 graph_bp = Blueprint("graph", __name__)
+
+
+def _get_cache_service():
+    """获取缓存服务（失败返回 None）"""
+    try:
+        from shared.cache import get_cache_service
+        return get_cache_service()
+    except Exception:
+        return None
+
+
+def _graph_query_hash(query: str) -> str:
+    """生成图谱查询哈希"""
+    return hashlib.md5(query.encode()).hexdigest()[:16]
 
 
 def _node_to_dict(val):
@@ -105,7 +127,7 @@ def query_graph():
         max_records = 1000
 
         # 简单打印收到的 Cypher，便于调试
-        print(f"[graph.query] incoming cypher: {cypher}")
+        logger.debug(f"[Graph] Query cypher: {cypher}")
 
         with driver.session() as session:
             # Add a defensive LIMIT if user forgot one
@@ -178,9 +200,7 @@ def query_graph():
                 records.append(item)
                 count += 1
 
-        print(f"[graph.query] records returned: {len(records)}")
-        # 打印前几条记录结构，便于调试
-        print("[graph.query] sample records:", records[:2])
+        logger.debug(f"[Graph] Query returned {len(records)} records")
 
         # 为了彻底规避 JSON 序列化问题，这里直接使用 json.dumps + default=str
         import json
@@ -188,12 +208,8 @@ def query_graph():
         payload = {"result": records}
         text = json.dumps(payload, ensure_ascii=False, default=str)
         return Response(text, mimetype="application/json")
-    except Exception as e:  # pragma: no cover - simple error wrapper
-        # 将完整异常打到控制台，方便排查
-        import traceback
-
-        print("[graph.query] ERROR:", e)
-        traceback.print_exc()
+    except Exception as e:
+        logger.exception(f"[Graph] Query error: {e}")
         return jsonify({"error": f"Query failed: {e}"}), 500
 
 
@@ -214,11 +230,8 @@ def reset_graph():
 
     status = "success" if cnt == 0 else "partial"
     return jsonify({"status": status, "remaining_nodes": int(cnt)})
-  except Exception as e:  # pragma: no cover
-    import traceback
-
-    print("[graph.reset] ERROR:", e)
-    traceback.print_exc()
+  except Exception as e:
+    logger.exception(f"[Graph] Reset error: {e}")
     return jsonify({"error": f"Reset failed: {e}"}), 500
 
 
@@ -254,11 +267,8 @@ def delete_node():
       deleted = int(rec["deleted"] if rec and "deleted" in rec else 0)
 
     return jsonify({"identity": identity, "deleted": deleted})
-  except Exception as e:  # pragma: no cover
-    import traceback
-
-    print("[graph.delete_node] ERROR:", e)
-    traceback.print_exc()
+  except Exception as e:
+    logger.exception(f"[Graph] Delete node error: {e}")
     return jsonify({"error": f"Delete node failed: {e}"}), 500
 
 
@@ -294,9 +304,279 @@ def delete_relation():
       deleted = int(rec["deleted"] if rec and "deleted" in rec else 0)
 
     return jsonify({"identity": identity, "deleted": deleted})
-  except Exception as e:  # pragma: no cover
-    import traceback
-
-    print("[graph.delete_relation] ERROR:", e)
-    traceback.print_exc()
+  except Exception as e:
+    logger.exception(f"[Graph] Delete relation error: {e}")
     return jsonify({"error": f"Delete relation failed: {e}"}), 500
+
+
+# ============================================================
+# 知识图谱增强 API
+# ============================================================
+
+@graph_bp.route("/extract", methods=["POST"])
+def extract_entities():
+    """从文本中抽取实体和关系，并写入图谱
+    
+    请求体：
+    {
+        "text": "要分析的文本",
+        "domain": "law",  // 可选，领域标识
+        "source_id": "chunk_123"  // 可选，来源标识
+    }
+    """
+    from services.graph_service import get_graph_service
+    
+    data = request.get_json(silent=True) or {}
+    text = (data.get("text") or "").strip()
+    
+    if not text:
+        return jsonify({"error": "text is required"}), 400
+    
+    domain = data.get("domain")
+    source_id = data.get("source_id")
+    
+    try:
+        service = get_graph_service()
+        result = service.build_graph_from_text(text, domain, source_id)
+        return jsonify(result)
+    except Exception as e:
+        logger.exception(f"[Graph] Extract error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@graph_bp.route("/search", methods=["POST"])
+def search_graph():
+    """搜索图谱实体（带缓存）"""
+    from services.graph_service import get_graph_service
+    
+    data = request.get_json(silent=True) or {}
+    keyword = (data.get("keyword") or "").strip()
+    
+    if not keyword:
+        return jsonify({"error": "keyword is required"}), 400
+    
+    entity_type = data.get("entity_type")
+    limit = int(data.get("limit", 20))
+    
+    # 尝试从缓存获取
+    cache = _get_cache_service()
+    cache_key = _graph_query_hash(f"search:{keyword}:{entity_type or ''}:{limit}")
+    if cache:
+        cached = cache.get_graph(cache_key)
+        if cached:
+            logger.debug(f"[Graph] Cache hit for search: {keyword}")
+            return jsonify(cached)
+    
+    try:
+        service = get_graph_service()
+        entities = service.search_entities(keyword, entity_type, limit)
+        result = {"entities": entities, "count": len(entities)}
+        
+        # 写入缓存
+        if cache:
+            cache.set_graph(cache_key, result)
+        
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"[Graph] Search error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@graph_bp.route("/neighbors", methods=["POST"])
+def get_neighbors():
+    """获取实体的邻居节点和关系（带缓存）"""
+    from services.graph_service import get_graph_service
+    
+    data = request.get_json(silent=True) or {}
+    entity_name = (data.get("entity_name") or "").strip()
+    
+    if not entity_name:
+        return jsonify({"error": "entity_name is required"}), 400
+    
+    depth = int(data.get("depth", 1))
+    limit = int(data.get("limit", 50))
+    
+    # 尝试从缓存获取
+    cache = _get_cache_service()
+    cache_key = _graph_query_hash(f"neighbors:{entity_name}:{depth}:{limit}")
+    if cache:
+        cached = cache.get_graph(cache_key)
+        if cached:
+            logger.debug(f"[Graph] Cache hit for neighbors: {entity_name}")
+            return jsonify(cached)
+    
+    try:
+        service = get_graph_service()
+        result = service.get_entity_neighbors(entity_name, depth, limit)
+        response = {
+            "entities": result.entities,
+            "relations": result.relations,
+        }
+        
+        # 写入缓存
+        if cache:
+            cache.set_graph(cache_key, response)
+        
+        return jsonify(response)
+    except Exception as e:
+        logger.error(f"[Graph] Neighbors error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@graph_bp.route("/path", methods=["POST"])
+def find_path():
+    """查找两个实体之间的路径
+    
+    请求体：
+    {
+        "source": "源实体名",
+        "target": "目标实体名",
+        "max_depth": 4
+    }
+    """
+    from services.graph_service import get_graph_service
+    
+    data = request.get_json(silent=True) or {}
+    source = (data.get("source") or "").strip()
+    target = (data.get("target") or "").strip()
+    
+    if not source or not target:
+        return jsonify({"error": "source and target are required"}), 400
+    
+    max_depth = int(data.get("max_depth", 4))
+    
+    try:
+        service = get_graph_service()
+        paths = service.find_path(source, target, max_depth)
+        return jsonify({"paths": paths, "count": len(paths)})
+    except Exception as e:
+        logger.exception(f"[Graph] Path error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@graph_bp.route("/enhanced_search", methods=["POST"])
+def enhanced_search():
+    """图谱增强的语义搜索
+    
+    结合实体抽取和图谱遍历，返回结构化的上下文
+    
+    请求体：
+    {
+        "query": "查询文本",
+        "domain": "law",  // 可选
+        "top_k": 10
+    }
+    """
+    from services.graph_service import get_graph_service
+    
+    data = request.get_json(silent=True) or {}
+    query = (data.get("query") or "").strip()
+    
+    if not query:
+        return jsonify({"error": "query is required"}), 400
+    
+    domain = data.get("domain")
+    top_k = int(data.get("top_k", 10))
+    
+    try:
+        service = get_graph_service()
+        result = service.graph_enhanced_search(query, domain, top_k)
+        return jsonify(result)
+    except Exception as e:
+        import traceback
+        print("[graph.enhanced_search] ERROR:", e)
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@graph_bp.route("/stats", methods=["GET"])
+def get_stats():
+    """获取图谱统计信息"""
+    from services.graph_service import get_graph_service
+    
+    try:
+        service = get_graph_service()
+        stats = service.get_stats()
+        return jsonify(stats)
+    except Exception as e:
+        import traceback
+        print("[graph.stats] ERROR:", e)
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@graph_bp.route("/create_entity", methods=["POST"])
+def create_entity():
+    """手动创建实体
+    
+    请求体：
+    {
+        "name": "实体名称",
+        "type": "Concept",
+        "domain": "law",
+        "properties": {}
+    }
+    """
+    from services.graph_service import get_graph_service, Entity
+    
+    data = request.get_json(silent=True) or {}
+    name = (data.get("name") or "").strip()
+    entity_type = data.get("type", "Concept")
+    
+    if not name:
+        return jsonify({"error": "name is required"}), 400
+    
+    domain = data.get("domain")
+    properties = data.get("properties", {})
+    
+    try:
+        service = get_graph_service()
+        entity = Entity(name=name, type=entity_type, properties=properties)
+        node_id = service.create_entity(entity, domain)
+        
+        if node_id is not None:
+            return jsonify({"success": True, "node_id": node_id})
+        else:
+            return jsonify({"success": False, "error": "Failed to create entity"}), 500
+    except Exception as e:
+        import traceback
+        print("[graph.create_entity] ERROR:", e)
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@graph_bp.route("/create_relation", methods=["POST"])
+def create_relation():
+    """手动创建关系
+    
+    请求体：
+    {
+        "source": "源实体名",
+        "target": "目标实体名",
+        "type": "RELATED_TO",
+        "properties": {}
+    }
+    """
+    from services.graph_service import get_graph_service, Relation
+    
+    data = request.get_json(silent=True) or {}
+    source = (data.get("source") or "").strip()
+    target = (data.get("target") or "").strip()
+    rel_type = data.get("type", "RELATED_TO")
+    
+    if not source or not target:
+        return jsonify({"error": "source and target are required"}), 400
+    
+    properties = data.get("properties", {})
+    
+    try:
+        service = get_graph_service()
+        relation = Relation(source=source, target=target, type=rel_type, properties=properties)
+        success = service.create_relation(relation)
+        
+        return jsonify({"success": success})
+    except Exception as e:
+        import traceback
+        print("[graph.create_relation] ERROR:", e)
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500

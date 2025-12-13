@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from datetime import datetime
 from zoneinfo import ZoneInfo
+from loguru import logger
 
 from repository.db_session import SessionLocal
 from models.memory import (
@@ -20,14 +21,43 @@ from llm_client import (
     generate_episodic_summary,
     generate_semantic_memories,
     generate_profile_from_semantics,
+    generate_memories_unified,
+    UNIFIED_MEMORY_GENERATION,
+    PROMPT_EVOLUTION_ENABLED,
 )
 from embeddings_client import generate_embedding
+from services.vector_service import get_memory_vector_service
 
 import os
 import math
 
+# ChromaDB 开关（渐进式迁移）
+USE_CHROMADB = os.getenv("USE_CHROMADB", "true").lower() == "true"
+
+
+def _sync_to_chromadb(mem: "Memory", embedding: list[float]) -> bool:
+    """将记忆同步写入 ChromaDB（失败不影响主流程）"""
+    if not USE_CHROMADB or not embedding:
+        return False
+    try:
+        vec_service = get_memory_vector_service()
+        return vec_service.add_memory(
+            memory_id=mem.id,
+            text=mem.text,
+            embedding=embedding,
+            project_id=mem.project_id or "",
+            user_id=mem.user_id,
+            memory_type=mem.type,
+            importance=float(mem.importance or 0.5),
+            tags=mem.tags if isinstance(mem.tags, list) else None,
+        )
+    except Exception as e:
+        logger.warning(f"[ChromaDB] sync failed for memory {mem.id}: {e}")
+        return False
+
 
 def _cosine(a: list[float], b: list[float]) -> float:
+    """余弦相似度（fallback 用）"""
     if not a or not b or len(a) != len(b):
         return 0.0
     dot = sum(x * y for x, y in zip(a, b))
@@ -206,44 +236,73 @@ def get_full_context():
                     500,
                 )
 
-            q = db.query(Memory, MemoryEmbedding).join(
-                MemoryEmbedding, MemoryEmbedding.memory_id == Memory.id
-            )
-            q = q.filter(Memory.project_id == project_id)
-            if user_id:
-                q = q.filter(Memory.user_id == user_id)
-            q = q.filter(Memory.type.in_(["semantic", "episodic"]))
-
-            candidates: list[dict] = []
-            for mem, emb_row in q.all():
-                emb = emb_row.embedding or []
+            top_candidates = []
+            
+            if USE_CHROMADB:
+                # 使用 ChromaDB 向量检索
                 try:
-                    vec = [float(x) for x in emb]
-                except Exception:
-                    continue
+                    vec_service = get_memory_vector_service()
+                    results = vec_service.search_memories(
+                        query_embedding=q_emb,
+                        project_id=project_id,
+                        user_id=user_id,
+                        memory_types=["semantic", "episodic"],
+                        top_k=rag_top_k,
+                    )
+                    # 批量加载 Memory 对象（性能优化：避免 N+1 查询）
+                    if results:
+                        memory_ids = [r.memory_id for r in results]
+                        memories_map = {
+                            m.id: m for m in db.query(Memory).filter(Memory.id.in_(memory_ids)).all()
+                        }
+                        for r in results:
+                            mem = memories_map.get(r.memory_id)
+                            if mem:
+                                top_candidates.append({
+                                    "memory": mem,
+                                    "similarity": r.similarity,
+                                    "importance": r.importance,
+                                    "score": r.score,
+                                })
+                    USE_CHROMADB_FALLBACK = False
+                except Exception as e:
+                    logger.warning(f"[RAG] ChromaDB search failed, fallback to JSONB: {e}")
+                    USE_CHROMADB_FALLBACK = True
+            else:
+                USE_CHROMADB_FALLBACK = True
+            
+            # Fallback: 使用 JSONB 向量检索
+            if not top_candidates or (not USE_CHROMADB):
+                q = db.query(Memory).filter(
+                    Memory.project_id == project_id,
+                    Memory.embedding.isnot(None),
+                )
+                if user_id:
+                    q = q.filter(Memory.user_id == user_id)
+                q = q.filter(Memory.type.in_(["semantic", "episodic"]))
 
-                sim = _cosine(q_emb, vec)
+                candidates: list[dict] = []
+                for mem in q.all():
+                    emb = mem.embedding or []
+                    try:
+                        vec = [float(x) for x in emb]
+                    except Exception:
+                        continue
 
-                importance = float(mem.importance or 0.0)
-                if importance < 0.0:
-                    importance = 0.0
-                if importance > 1.0:
-                    importance = 1.0
+                    sim = _cosine(q_emb, vec)
+                    importance = float(mem.importance or 0.0)
+                    importance = max(0.0, min(1.0, importance))
+                    final_score = sim * 0.8 + importance * 0.2
 
-                # 这里不引入时间依赖的新鲜度，保持简单：仅用相似度 + importance
-                final_score = sim * 0.8 + importance * 0.2
-
-                candidates.append(
-                    {
+                    candidates.append({
                         "memory": mem,
                         "similarity": float(sim),
                         "importance": float(importance),
                         "score": float(final_score),
-                    }
-                )
+                    })
 
-            candidates.sort(key=lambda x: x["score"], reverse=True)
-            top_candidates = candidates[:rag_top_k]
+                candidates.sort(key=lambda x: x["score"], reverse=True)
+                top_candidates = candidates[:rag_top_k]
 
             total_sim = 0.0
             total_final = 0.0
@@ -1046,14 +1105,17 @@ def cleanup_memories():
 def run_job(job_id: int):
     """执行单个 MemoryGenerationJob。
 
-    支持的 job_type：
-    - episodic_summary  → 生成一条 episodic 记忆 + 向量
-    - semantic_extract  → 生成多条 semantic 记忆 + 向量
+    主要 job_type（推荐）：
+    - unified_memory    → 一次 LLM 调用生成 episodic + semantic（默认）
     - profile_aggregate → 聚合 semantic 生成/更新 Profile
+    
+    兼容旧类型（逐步废弃）：
+    - episodic_summary  → 仅生成 episodic
+    - semantic_extract  → 仅生成 semantic
 
-    返回值兼容前端 JobsPage 的预期：
+    返回值：
     - job: { id, status, updated_at }
-    - 可选 memory: 最近生成的一条 Memory（仅对 episodic/semantic 返回以便调试）。
+    - 可选 memory: 最近生成的一条 Memory
     """
 
     db: Session = SessionLocal()
@@ -1097,6 +1159,13 @@ def run_job(job_id: int):
 
                 summary_text = generate_episodic_summary(job.session_id, conversation_text)
 
+                # 生成 embedding（失败不影响主流程）
+                emb = None
+                try:
+                    emb = generate_embedding(summary_text)
+                except Exception:
+                    pass
+
                 mem = Memory(
                     user_id=job.user_id,
                     agent_id=job.agent_id,
@@ -1104,24 +1173,16 @@ def run_job(job_id: int):
                     type="episodic",
                     source="auto_episodic_summary",
                     text=summary_text,
-                    summary=None,
                     importance=0.7,
+                    embedding=emb,  # 直接存到 Memory
+                    embedding_model=os.getenv("EMBEDDINGS_NAME", "") if emb else None,
                 )
                 db.add(mem)
                 db.flush()
-
-                # 为 episodic 总结生成 embedding（失败不影响主流程）
-                try:
-                    emb = generate_embedding(summary_text)
-                    db.add(
-                        MemoryEmbedding(
-                            memory_id=mem.id,
-                            embedding=emb,
-                            model_name=os.getenv("EMBEDDINGS_NAME", ""),
-                        )
-                    )
-                except Exception:  # noqa: BLE001
-                    pass
+                
+                # 同步到 ChromaDB
+                if emb:
+                    _sync_to_chromadb(mem, emb)
 
                 created_memory = mem
 
@@ -1146,6 +1207,14 @@ def run_job(job_id: int):
                         continue
                     importance = float(item.get("importance") or 0.7)
                     tags = item.get("tags")
+                    
+                    # 生成 embedding
+                    emb = None
+                    try:
+                        emb = generate_embedding(text)
+                    except Exception:
+                        pass
+                    
                     mem = Memory(
                         user_id=job.user_id,
                         agent_id=job.agent_id,
@@ -1153,26 +1222,18 @@ def run_job(job_id: int):
                         type="semantic",
                         source="auto_semantic_extract",
                         text=text,
-                        summary=None,
                         importance=importance,
                         tags=tags,
+                        embedding=emb,
+                        embedding_model=os.getenv("EMBEDDINGS_NAME", "") if emb else None,
                     )
                     db.add(mem)
                     db.flush()
-
-                    # 为 semantic 记忆生成 embedding（失败不影响主流程）
-                    try:
-                        emb = generate_embedding(text)
-                        db.add(
-                            MemoryEmbedding(
-                                memory_id=mem.id,
-                                embedding=emb,
-                                model_name=os.getenv("EMBEDDINGS_NAME", ""),
-                            )
-                        )
-                    except Exception:  # noqa: BLE001
-                        pass
-
+                    
+                    # 同步到 ChromaDB
+                    if emb:
+                        _sync_to_chromadb(mem, emb)
+                    
                     last_mem = mem
 
                 created_memory = last_mem
@@ -1231,6 +1292,127 @@ def run_job(job_id: int):
                         profile_json=profile_json,
                     )
                     db.add(profile)
+
+            elif job.job_type == "unified_memory":
+                # 统一记忆生成：一次 LLM 调用同时生成 episodic + semantic
+                # 优化：原来需要 2 次 LLM 调用，现在合并为 1 次
+                msgs_q = (
+                    db.query(ConversationMessage)
+                    .filter(ConversationMessage.session_id == job.session_id)
+                    .order_by(ConversationMessage.id.asc())
+                )
+                texts: list[str] = []
+                for m in msgs_q.all():
+                    texts.append(f"[{m.role}] {m.content}")
+                conversation_text = "\n".join(texts)
+                
+                # 一次 LLM 调用
+                result = generate_memories_unified(
+                    session_id=job.session_id,
+                    conversation_text=conversation_text,
+                    user_id=job.user_id,
+                    project_id=job.project_id,
+                    include_prompt_suggestions=True,
+                )
+                
+                # 1) 存储 episodic
+                episodic_text = result.get("episodic", "").strip()
+                if episodic_text:
+                    emb = None
+                    try:
+                        emb = generate_embedding(episodic_text)
+                    except Exception:
+                        pass
+                    mem = Memory(
+                        user_id=job.user_id,
+                        agent_id=job.agent_id,
+                        project_id=job.project_id,
+                        type="episodic",
+                        source="auto_unified",
+                        text=episodic_text,
+                        importance=0.7,
+                        embedding=emb,
+                        embedding_model=os.getenv("EMBEDDINGS_NAME", "") if emb else None,
+                    )
+                    db.add(mem)
+                    db.flush()
+                    if emb:
+                        _sync_to_chromadb(mem, emb)
+                    created_memory = mem
+                
+                # 2) 存储 semantic
+                for item in result.get("semantic", []):
+                    text = str(item.get("text") or "").strip()
+                    if not text:
+                        continue
+                    importance = float(item.get("importance") or 0.7)
+                    tags = item.get("tags")
+                    emb = None
+                    try:
+                        emb = generate_embedding(text)
+                    except Exception:
+                        pass
+                    mem = Memory(
+                        user_id=job.user_id,
+                        agent_id=job.agent_id,
+                        project_id=job.project_id,
+                        type="semantic",
+                        source="auto_unified",
+                        text=text,
+                        importance=importance,
+                        tags=tags,
+                        embedding=emb,
+                        embedding_model=os.getenv("EMBEDDINGS_NAME", "") if emb else None,
+                    )
+                    db.add(mem)
+                    db.flush()
+                    if emb:
+                        _sync_to_chromadb(mem, emb)
+                
+                # 3) 处理 prompt 建议（如果启用）
+                prompt_suggestions = result.get("prompt_suggestions", [])
+                if prompt_suggestions and PROMPT_EVOLUTION_ENABLED:
+                    from services.prompt_evolution import get_prompt_evolution_service
+                    svc = get_prompt_evolution_service()
+                    svc.process_llm_suggestions(
+                        suggestions=prompt_suggestions,
+                        user_id=job.user_id,
+                        project_id=job.project_id,
+                        trigger_type="unified_memory",
+                        trigger_job_id=job.id,
+                    )
+                
+                # 4) 判断是否需要更新画像（基于 semantic 增量，而非 LLM 判断）
+                if job.user_id:
+                    # 统计该用户当前 semantic 记忆总数
+                    semantic_count = db.query(Memory).filter(
+                        Memory.user_id == job.user_id,
+                        Memory.type == "semantic",
+                    ).count()
+                    
+                    # 获取阈值（默认 5 条 semantic 后触发画像更新）
+                    try:
+                        threshold = int(os.getenv("PROFILE_AUTO_JOB_MIN_NEW_SEMANTIC", "5"))
+                    except (TypeError, ValueError):
+                        threshold = 5
+                    
+                    # 检查是否已有 pending 的 profile Job，避免重复
+                    existing = db.query(MemoryGenerationJob).filter(
+                        MemoryGenerationJob.user_id == job.user_id,
+                        MemoryGenerationJob.job_type == "profile_aggregate",
+                        MemoryGenerationJob.status == "pending",
+                    ).first()
+                    
+                    # 满足条件且无重复 Job 时创建
+                    if semantic_count >= threshold and not existing:
+                        profile_job = MemoryGenerationJob(
+                            user_id=job.user_id,
+                            project_id=job.project_id,
+                            session_id=f"profile:{job.user_id}:{job.project_id or 'global'}",
+                            job_type="profile_aggregate",
+                            status="pending",
+                        )
+                        db.add(profile_job)
 
             else:
                 raise RuntimeError(f"unsupported job_type: {job.job_type}")
