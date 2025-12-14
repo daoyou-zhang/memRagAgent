@@ -4,7 +4,7 @@
  * 后端端口：8000（与 memory 服务的 5000 不同）
  */
 
-const DAOYOU_BASE = 'http://127.0.0.1:8000'
+export const DAOYOU_BASE = 'http://127.0.0.1:8000'
 
 export interface CognitiveRequest {
   input: string

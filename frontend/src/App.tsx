@@ -16,6 +16,7 @@ import CognitivePage from './pages/CognitivePage'
 import TenantsPage from './pages/TenantsPage'
 import SystemStatusPage from './pages/SystemStatusPage'
 import SettingsPage from './pages/SettingsPage'
+import StreamTestPage from './pages/StreamTestPage'
 
 // 导航配置
 const navGroups = [
@@ -93,16 +94,14 @@ function Sidebar() {
       </nav>
       
       <div style={{ padding: '1rem 1.25rem', borderTop: '1px solid var(--border-color)' }}>
-        <a
-          href="http://localhost:8000/test/stream"
-          target="_blank"
-          rel="noopener noreferrer"
+        <Link
+          to="/stream-test"
           className="nav-item"
           style={{ margin: '-0.625rem -1.25rem' }}
         >
           <span className="nav-item-icon">🔗</span>
           <span>流式测试</span>
-        </a>
+        </Link>
       </div>
     </aside>
   )
@@ -126,6 +125,7 @@ const pageTitles: Record<string, string> = {
   '/graph': '知识图谱',
   '/tenants': '多租户管理',
   '/system': '系统状态',
+  '/stream-test': '流式响应测试',
 }
 
 function AppShell() {
@@ -165,6 +165,7 @@ function AppShell() {
             <Route path="/tenants" element={<TenantsPage />} />
             <Route path="/system" element={<SystemStatusPage />} />
             <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/stream-test" element={<StreamTestPage />} />
             <Route path="*" element={
               <div className="empty-state">
                 <div className="empty-state-icon">🔍</div>

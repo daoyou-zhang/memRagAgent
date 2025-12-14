@@ -35,16 +35,6 @@ def create_app() -> FastAPI:
         return {"status": "healthy", "service": "daoyou_agent"}
 
     # ============================================================
-    # 测试页面
-    # ============================================================
-    
-    @app.get("/test/stream")
-    async def test_stream_page():
-        """流式响应测试页面"""
-        static_dir = Path(__file__).parent / "static"
-        return FileResponse(static_dir / "test_stream.html")
-
-    # ============================================================
     # Status 端点（供前端监控）
     # ============================================================
     
