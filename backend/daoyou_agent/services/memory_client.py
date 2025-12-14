@@ -11,6 +11,7 @@
 
 配置：
 - 环境变量 MEMORY_SERVICE_BASE_URL: memRag 服务地址，默认 http://127.0.0.1:5000
+- 环境变量 INTERNAL_API_KEY: 服务间通信 API Key（使用管理员 Key）
 """
 import os
 from typing import Any, Dict, Optional, List
@@ -26,9 +27,27 @@ class MemoryClient:
     """
 
     def __init__(self) -> None:
-        """初始化客户端，读取 memRag 服务地址"""
+        """初始化客户端，读取 memRag 服务地址和认证配置"""
         base = os.getenv("MEMORY_SERVICE_BASE_URL", "http://127.0.0.1:5000").rstrip("/")
         self.base_url = base
+        # 服务间通信使用内部 API Key（管理员权限）
+        self.api_key = os.getenv("INTERNAL_API_KEY") or os.getenv("ADMIN_API_KEY")
+    
+    def _get_headers(self, project_id: Optional[str] = None, user_api_key: Optional[str] = None) -> Dict[str, str]:
+        """获取请求头（含认证信息）
+        
+        Args:
+            project_id: 项目 ID
+            user_api_key: 用户的 API Key（优先使用，保持租户隔离）
+        """
+        headers = {}
+        # 优先使用用户的 API Key，其次使用服务内部 Key
+        api_key = user_api_key or self.api_key
+        if api_key:
+            headers["X-API-Key"] = api_key
+        if project_id:
+            headers["X-Project-Id"] = project_id
+        return headers
 
     async def get_full_context(
         self,
@@ -38,6 +57,7 @@ class MemoryClient:
         query: Optional[str] = None,
         recent_message_limit: Optional[int] = None,
         rag_top_k: Optional[int] = None,
+        user_api_key: Optional[str] = None,
     ) -> Dict[str, Any]:
         """获取完整认知上下文
         
@@ -50,6 +70,7 @@ class MemoryClient:
             query: 查询内容（用于 RAG 检索）
             recent_message_limit: 最近对话条数限制
             rag_top_k: RAG 返回条数限制
+            user_api_key: 用户的 API Key（保持租户隔离）
             
         Returns:
             包含 user_profile, working_memory, rag_memories 的字典
@@ -67,8 +88,9 @@ class MemoryClient:
             payload["rag_top_k"] = rag_top_k
 
         url = f"{self.base_url}/api/memory/context/full"
+        headers = self._get_headers(project_id, user_api_key)
         async with httpx.AsyncClient() as client:
-            resp = await client.post(url, json=payload, timeout=30.0)
+            resp = await client.post(url, json=payload, headers=headers, timeout=30.0)
         resp.raise_for_status()
         return resp.json()
 
@@ -120,8 +142,9 @@ class MemoryClient:
             payload["metadata"] = metadata
 
         url = f"{self.base_url}/api/memory/memories"
+        headers = self._get_headers(project_id)
         async with httpx.AsyncClient() as client:
-            resp = await client.post(url, json=payload, timeout=30.0)
+            resp = await client.post(url, json=payload, headers=headers, timeout=30.0)
         resp.raise_for_status()
         return resp.json()
 
@@ -159,8 +182,9 @@ class MemoryClient:
             payload["session_id"] = session_id
 
         url = f"{self.base_url}/api/memory/jobs/profile/auto"
+        headers = self._get_headers(project_id)
         async with httpx.AsyncClient() as client:
-            resp = await client.post(url, json=payload, timeout=30.0)
+            resp = await client.post(url, json=payload, headers=headers, timeout=30.0)
         resp.raise_for_status()
         return resp.json()
 
@@ -226,8 +250,9 @@ class MemoryClient:
             payload["context_used"] = context_used
 
         url = f"{self.base_url}/api/conversations/record"
+        headers = self._get_headers(project_id)
         async with httpx.AsyncClient() as client:
-            resp = await client.post(url, json=payload, timeout=30.0)
+            resp = await client.post(url, json=payload, headers=headers, timeout=30.0)
         resp.raise_for_status()
         return resp.json()
 

@@ -296,6 +296,15 @@ class TenantService:
         if user:
             user.last_login_at = datetime.now()
     
+    def delete_user(self, user_id: int) -> bool:
+        """删除用户"""
+        user = self.get_user_by_id(user_id)
+        if not user:
+            return False
+        self.db.delete(user)
+        self.db.flush()
+        return True
+    
     # ========== API 密钥管理 ==========
     
     def create_api_key(

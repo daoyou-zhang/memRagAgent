@@ -7,13 +7,14 @@ import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, g
 from loguru import logger
 from sqlalchemy.orm import Session
 
 # 添加 shared 模块路径
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
+from shared.auth import flask_auth_required, Scopes
 from repository.db_session import SessionLocal
 from models.memory import Memory
 from embeddings_client import generate_embedding
@@ -62,16 +63,26 @@ def _recency_score(created_at: datetime | None, half_life_days: float = 30.0) ->
 
 
 @rag_bp.post("/query")
+@flask_auth_required(scopes=[Scopes.READ_MEMORIES])
 def rag_query():
     """RAG 查询接口（优先使用 ChromaDB + Redis 缓存）"""
     payload = request.get_json(force=True) or {}
     user_id = payload.get("user_id")
-    project_id = payload.get("project_id")
     query_text = payload.get("query") or ""
     try:
         top_k = int(payload.get("top_k", 8))
     except (TypeError, ValueError):
         top_k = 8
+
+    # 租户隔离：非管理员使用上下文中的 project_id
+    auth = getattr(g, "auth", None)
+    is_admin = auth and getattr(auth, "is_admin", False)
+    ctx = getattr(g, "tenant_ctx", {}) or {}
+    
+    if is_admin:
+        project_id = payload.get("project_id") or ctx.get("project_id")
+    else:
+        project_id = ctx.get("project_id") or payload.get("project_id")
 
     if not project_id:
         return jsonify({"error": "field 'project_id' is required"}), 400

@@ -435,6 +435,22 @@ def update_user(user_id: int):
         db.close()
 
 
+@tenants_bp.delete("/users/<int:user_id>")
+def delete_user(user_id: int):
+    """删除用户"""
+    db: Session = SessionLocal()
+    try:
+        svc = TenantService(db)
+        
+        if not svc.delete_user(user_id):
+            return jsonify({"error": "user not found"}), 404
+        
+        db.commit()
+        return jsonify({"success": True, "deleted_user_id": user_id})
+    finally:
+        db.close()
+
+
 # ============================================================
 # API 密钥管理
 # ============================================================
@@ -536,6 +552,59 @@ def revoke_api_key(key_id: int):
         
         db.commit()
         return jsonify({"success": True})
+    finally:
+        db.close()
+
+
+@tenants_bp.post("/api-keys/<int:key_id>/regenerate")
+def regenerate_api_key(key_id: int):
+    """重新生成 API 密钥（密钥丢失时使用）
+    
+    - 撤销旧密钥
+    - 生成新密钥（保留原名称和权限）
+    - 返回新密钥（只显示一次）
+    """
+    db: Session = SessionLocal()
+    try:
+        svc = TenantService(db)
+        
+        # 获取旧密钥信息
+        from models.tenant import ApiKey
+        old_key = db.query(ApiKey).filter(ApiKey.id == key_id).first()
+        
+        if not old_key:
+            return jsonify({"error": "api key not found"}), 404
+        
+        # 保存旧密钥的信息
+        tenant_id = old_key.tenant_id
+        user_id = old_key.user_id
+        name = old_key.name
+        scopes = old_key.scopes
+        expires_at = old_key.expires_at
+        
+        # 撤销旧密钥
+        svc.revoke_api_key(key_id)
+        
+        # 创建新密钥
+        new_api_key, full_key = svc.create_api_key(
+            tenant_id=tenant_id,
+            name=f"{name}",  # 保留原名称
+            user_id=user_id,
+            scopes=scopes,
+            expires_at=expires_at,
+        )
+        
+        db.commit()
+        
+        return jsonify({
+            "id": new_api_key.id,
+            "name": new_api_key.name,
+            "key": full_key,  # 新密钥，只显示一次！
+            "key_prefix": new_api_key.key_prefix,
+            "scopes": new_api_key.scopes,
+            "old_key_id": key_id,
+            "warning": "旧密钥已撤销，请妥善保存新密钥，此密钥只显示一次",
+        }), 201
     finally:
         db.close()
 

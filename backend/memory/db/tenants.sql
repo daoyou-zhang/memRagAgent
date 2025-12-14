@@ -113,3 +113,30 @@ INSERT INTO user_groups (tenant_id, code, name, is_default)
 SELECT id, 'default', '默认组', TRUE
 FROM tenants WHERE code = 'default'
 ON CONFLICT (tenant_id, code) DO NOTHING;
+
+
+-- ============================================================
+-- 测试租户（开发/测试用）
+-- ============================================================
+
+-- 道友测试租户
+INSERT INTO tenants (code, name, type, status, max_users, max_storage_mb)
+VALUES ('DAOYOUTEST', '道友测试租户', 'team', 'active', 100, 10000)
+ON CONFLICT (code) DO NOTHING;
+
+-- 为 DAOYOUTEST 创建默认用户组
+INSERT INTO user_groups (tenant_id, code, name, is_default)
+SELECT id, 'default', '默认组', TRUE
+FROM tenants WHERE code = 'DAOYOUTEST'
+ON CONFLICT (tenant_id, code) DO NOTHING;
+
+-- 测试租户 B（用于隔离测试）
+INSERT INTO tenants (code, name, type, status, max_users, max_storage_mb)
+VALUES ('TENANT_B', '测试租户B', 'team', 'active', 50, 5000)
+ON CONFLICT (code) DO NOTHING;
+
+-- 为 TENANT_B 创建默认用户组
+INSERT INTO user_groups (tenant_id, code, name, is_default)
+SELECT id, 'default', '默认组', TRUE
+FROM tenants WHERE code = 'TENANT_B'
+ON CONFLICT (tenant_id, code) DO NOTHING;

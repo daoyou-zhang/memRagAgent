@@ -2,12 +2,13 @@ import os
 import sys
 from pathlib import Path
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, g
 from sqlalchemy.orm import Session
 
 # 添加 shared 模块路径
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
+from shared.auth import flask_auth_required, apply_project_filter, Scopes
 from repository.db_session import SessionLocal
 from models.memory import Memory, Profile, KnowledgeInsight
 from llm_client import generate_profile_from_semantics, generate_profile_with_reflection
@@ -25,8 +26,18 @@ def _get_cache_service():
 
 
 @profiles_bp.get("/<user_id>")
+@flask_auth_required(scopes=[Scopes.READ_MEMORIES])
 def get_profile(user_id: str):
-    project_id = request.args.get("project_id")
+    # 租户隔离：非管理员使用上下文中的 project_id
+    auth = getattr(g, "auth", None)
+    is_admin = auth and getattr(auth, "is_admin", False)
+    ctx = getattr(g, "tenant_ctx", {}) or {}
+    
+    if is_admin:
+        project_id = request.args.get("project_id") or ctx.get("project_id")
+    else:
+        project_id = ctx.get("project_id") or request.args.get("project_id")
+    
     force_refresh_raw = request.args.get("force_refresh")
     force_refresh = (
         isinstance(force_refresh_raw, str)

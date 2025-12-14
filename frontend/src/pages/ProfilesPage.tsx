@@ -2,8 +2,8 @@ import { useState, type FormEvent } from 'react'
 import { getUserProfile, type RawProfilePayload } from '../api/profiles'
 
 function ProfilesPage() {
-  const [userId, setUserId] = useState('48eedcd8-ed89-464c-8109-7bcb6fe94e36')
-  const [projectId, setProjectId] = useState('DAOYOUTEST')
+  const [userId, setUserId] = useState('')
+  const [projectId, setProjectId] = useState('')
   const [forceRefresh, setForceRefresh] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)

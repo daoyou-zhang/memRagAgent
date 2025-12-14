@@ -6,9 +6,29 @@
 
 ---
 
+## 认证说明
+
+所有 API 请求需要携带认证头（生产模式下）：
+
+| Header | 说明 | 必填 |
+|--------|------|------|
+| `X-API-Key` | API 密钥 | 是（生产模式） |
+| `X-Project-Id` | 项目/租户编码 | 否（管理员可不填） |
+| `X-User-Id` | 用户 ID | 否（可选追踪） |
+
+**认证模式：**
+- `AUTH_ENABLED=false`：开发模式，无需认证
+- `AUTH_ENABLED=true`：生产模式，需要有效 API Key
+
+详细认证机制参见 [TENANT_SECURITY.md](./TENANT_SECURITY.md)。
+
+---
+
 ## 调用速查（How to call）
 
 这一节给出最常用调用路径的速查示例，便于在代码或 Postman/curl 中直接套用。
+
+> **注意**：以下示例省略了认证头，生产环境请添加 `-H "X-API-Key: sk-xxx"`。
 
 - **写入一条记忆**（手动植入 semantic/episodic）：
 

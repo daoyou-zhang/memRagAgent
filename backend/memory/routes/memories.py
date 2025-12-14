@@ -1,4 +1,7 @@
-from flask import Blueprint, jsonify, request
+import sys
+from pathlib import Path
+
+from flask import Blueprint, jsonify, request, g
 from sqlalchemy import cast
 from sqlalchemy.dialects.postgresql import TEXT
 from sqlalchemy.orm import Session
@@ -6,6 +9,10 @@ from sqlalchemy import func
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from loguru import logger
+
+# 添加 shared 到路径
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from shared.auth import flask_auth_required, apply_project_filter, Scopes
 
 from repository.db_session import SessionLocal
 from models.memory import (
@@ -87,6 +94,7 @@ memories_bp = Blueprint("memories", __name__)
 
 
 @memories_bp.post("/memories")
+@flask_auth_required(scopes=[Scopes.WRITE_MEMORIES])
 def create_memory():
     payload = request.get_json(force=True) or {}
 
@@ -96,9 +104,18 @@ def create_memory():
 
     user_id = payload.get("user_id")
     agent_id = payload.get("agent_id")
-    project_id = payload.get("project_id")
     mem_type = payload.get("type") or "semantic"
     source = payload.get("source") or "manual"
+
+    # 租户隔离：非管理员强制使用上下文中的 project_id
+    auth = getattr(g, "auth", None)
+    is_admin = auth and getattr(auth, "is_admin", False)
+    ctx = getattr(g, "tenant_ctx", {}) or {}
+
+    if is_admin:
+        project_id = payload.get("project_id") or ctx.get("project_id")
+    else:
+        project_id = ctx.get("project_id") or payload.get("project_id")
 
     importance = payload.get("importance")
     try:
@@ -150,6 +167,7 @@ def create_memory():
 
 
 @memories_bp.post("/context/full")
+@flask_auth_required(scopes=[Scopes.READ_MEMORIES])
 def get_full_context():
     payload = request.get_json(force=True) or {}
 
@@ -502,6 +520,7 @@ def create_profile_job():
 
 
 @memories_bp.get("/jobs")
+@flask_auth_required(scopes=[Scopes.READ_MEMORIES])
 def list_jobs():
     status = request.args.get("status")
     session_id = request.args.get("session_id")
@@ -509,6 +528,16 @@ def list_jobs():
     db: Session = SessionLocal()
     try:
         q = db.query(MemoryGenerationJob)
+        
+        # 租户隔离：非管理员只能查自己项目的任务
+        auth = getattr(g, "auth", None)
+        is_admin = auth and getattr(auth, "is_admin", False)
+        
+        if not is_admin:
+            ctx = getattr(g, "tenant_ctx", {}) or {}
+            ctx_project_id = ctx.get("project_id")
+            if ctx_project_id:
+                q = q.filter(MemoryGenerationJob.project_id == ctx_project_id)
 
         if status:
             q = q.filter(MemoryGenerationJob.status == status)
@@ -840,6 +869,7 @@ def close_session(session_id: str):
 
 
 @memories_bp.post("/memories/query")
+@flask_auth_required(scopes=[Scopes.READ_MEMORIES])
 def query_memories():
     payload = request.get_json(force=True) or {}
 
@@ -876,12 +906,12 @@ def query_memories():
     db: Session = SessionLocal()
     try:
         q = db.query(Memory)
+        
+        # 应用租户隔离
+        q = apply_project_filter(q, Memory.project_id)
 
         if user_id:
             q = q.filter(Memory.user_id == user_id)
-        if project_id:
-            q = q.filter(Memory.project_id == project_id)
-
         if types:
             q = q.filter(Memory.type.in_(types))
         if min_importance is not None:
@@ -958,6 +988,7 @@ def query_memories():
 
 
 @memories_bp.post("/memories/cleanup")
+@flask_auth_required(scopes=[Scopes.DELETE_MEMORIES], roles=["admin"])
 def cleanup_memories():
     """手动清理记忆与画像。
 

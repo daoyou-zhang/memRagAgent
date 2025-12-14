@@ -11,8 +11,8 @@ function MemoryQueryPage() {
   const [health, setHealth] = useState<HealthResponse | null>(null)
   const [healthError, setHealthError] = useState<string | null>(null)
 
-  const [qUserId, setQUserId] = useState('48eedcd8-ed89-464c-8109-7bcb6fe94e36')
-  const [qProjectId, setQProjectId] = useState('DAOYOUTEST')
+  const [qUserId, setQUserId] = useState('')
+  const [qProjectId, setQProjectId] = useState('')
   const [qText, setQText] = useState('')
   const [qTags, setQTags] = useState('')
   const [qTypes, setQTypes] = useState<string>('semantic,episodic,working')

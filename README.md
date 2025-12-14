@@ -74,7 +74,8 @@
 ### 3. 多租户支持
 - **租户隔离**: Tenant → UserGroup → User 层级
 - **API 密钥**: 每租户独立 API Key 管理
-- **数据隔离**: tenant_id 字段贯穿所有表
+- **数据隔离**: project_id/tenant_id 字段贯穿所有表
+- **详细文档**: 参见 [TENANT_SECURITY.md](./TENANT_SECURITY.md)
 
 ### 4. 性能优化
 - **Redis 缓存**: Embedding/Profile/RAG 结果缓存
@@ -359,11 +360,55 @@ KNOWLEDGE_SERVICE_URL=http://127.0.0.1:5001
 - [x] 配置模板 (.env.example)
 
 ### 待完成 🚧
+- [x] API Key 认证与租户隔离
+- [x] 认证与隔离测试 (test_auth.py)
 - [ ] 单元测试覆盖
 - [ ] API 文档 (OpenAPI/Swagger)
 - [ ] Docker 部署脚本
 - [ ] 代码沙箱执行
 - [ ] 文件上传解析
+
+## 🧪 测试
+
+### 运行测试
+
+```bash
+cd backend/tests
+
+# 运行所有认证测试
+pytest test_auth.py -v
+
+# 只运行管理员模式测试
+pytest test_auth.py::TestAdminMode -v
+
+# 只运行租户隔离测试
+pytest test_auth.py::TestTenantIsolation -v
+
+# 只运行租户管理 API 测试
+pytest test_auth.py::TestTenantManagement -v
+```
+
+### 测试配置
+
+测试使用 `test_config.py` 集中管理配置：
+
+```python
+from test_config import (
+    ADMIN,           # 管理员配置
+    TENANT_A,        # 测试租户 A (DAOYOUTEST)
+    TENANT_B,        # 测试租户 B
+    TEST_USER_1,     # 测试用户 1
+    get_admin_headers,
+    get_user_headers,
+)
+```
+
+### 测试模式
+
+| 模式 | 环境变量 | 说明 |
+|------|----------|------|
+| 开发模式 | `AUTH_ENABLED=false` | 无需认证，所有请求有管理员权限 |
+| 生产模式 | `AUTH_ENABLED=true` | 需要有效 API Key |
 
 ## 📄 License
 

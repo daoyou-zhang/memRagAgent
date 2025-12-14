@@ -2,8 +2,8 @@ import { useState, type FormEvent } from 'react'
 import { ragQuery, type RagQueryResponse } from '../api/rag'
 
 function RagPage() {
-  const [projectId, setProjectId] = useState('DAOYOUTEST')
-  const [userId, setUserId] = useState('48eedcd8-ed89-464c-8109-7bcb6fe94e36')
+  const [projectId, setProjectId] = useState('')
+  const [userId, setUserId] = useState('')
   const [query, setQuery] = useState('')
   const [topK, setTopK] = useState(8)
   const [loading, setLoading] = useState(false)

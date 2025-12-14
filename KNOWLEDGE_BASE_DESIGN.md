@@ -135,7 +135,18 @@ app.register_blueprint(knowledge_bp, url_prefix="/api/knowledge")
 
 当前 `routes/knowledge.py` 已提供的接口：
 
-### 3.1 健康检查
+### 3.1 认证说明
+
+所有 API 请求需要携带认证头（生产模式下）：
+
+| Header | 说明 | 必填 |
+|--------|------|------|
+| `X-API-Key` | API 密钥 | 是（生产模式） |
+| `X-Project-Id` | 项目/租户编码 | 否（管理员可不填） |
+
+详细认证机制参见 [TENANT_SECURITY.md](./TENANT_SECURITY.md)。
+
+### 3.2 健康检查
 
 - `GET /api/knowledge/health`
   - 返回：`{"status": "ok", "service": "knowledge", "version": "0.1"}`。

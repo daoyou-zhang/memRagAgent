@@ -2,9 +2,9 @@ import { useState, type FormEvent } from 'react'
 import { fetchFullContext, type FullContextResponse } from '../api/memory'
 
 function FullContextPage() {
-  const [projectId, setProjectId] = useState('DAOYOUTEST')
-  const [userId, setUserId] = useState('48eedcd8-ed89-464c-8109-7bcb6fe94e36')
-  const [sessionId, setSessionId] = useState('ced440f3-90d2-48be-a651-b7da0b2dcb91')
+  const [projectId, setProjectId] = useState('')
+  const [userId, setUserId] = useState('')
+  const [sessionId, setSessionId] = useState('')
   const [query, setQuery] = useState('')
   const [recentLimit, setRecentLimit] = useState<number | ''>('')
   const [ragTopK, setRagTopK] = useState<number | ''>('')

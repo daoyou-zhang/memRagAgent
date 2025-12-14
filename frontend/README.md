@@ -27,7 +27,8 @@
 | 知识文档 | `/knowledge/documents` | 文档管理和索引 |
 | Knowledge RAG | `/knowledge/rag` | 知识库 RAG 测试 |
 | 知识图谱 | `/graph` | 图谱可视化和搜索 |
-| 多租户管理 | `/tenants` | 租户/用户组/用户管理 |
+| 多租户管理 | `/tenants` | 租户/用户/API Key 管理 |
+| 设置 | `/settings` | API Key 和 Project ID 配置 |
 | 系统状态 | `/system` | 服务状态监控和功能测试 |
 
 ## 项目结构
@@ -36,6 +37,7 @@
 frontend/
 ├── src/
 │   ├── api/                 # API 客户端
+│   │   ├── http.ts          # HTTP 封装 + 认证
 │   │   ├── cognitive.ts     # 认知对话 API
 │   │   ├── memory.ts        # 记忆 API
 │   │   ├── knowledge.ts     # 知识库 API
@@ -92,6 +94,32 @@ const BASE_URLS = {
 }
 ```
 
+### 认证配置
+
+前端通过 HTTP 客户端自动附加认证头：
+
+```typescript
+// src/api/http.ts
+import { getApiKey, getProjectId } from './http'
+
+// 自动附加到所有请求
+headers['X-API-Key'] = getApiKey()
+headers['X-Project-Id'] = getProjectId()
+```
+
+**设置方式：**
+
+1. 访问 `/tenants` 页面创建租户和 API Key
+2. 访问 `/settings` 页面配置 API Key 和 Project ID
+3. 或通过浏览器控制台手动设置：
+
+```javascript
+localStorage.setItem('memrag_api_key', 'sk-xxx')
+localStorage.setItem('memrag_project_id', 'DAOYOUTEST')
+```
+
+详细认证机制参见 [TENANT_SECURITY.md](../TENANT_SECURITY.md)。
+
 ## 设计特点
 
 ### 深色主题
@@ -118,5 +146,8 @@ const BASE_URLS = {
 - [x] 知识库管理页面
 - [x] 图谱可视化
 - [x] React.memo 优化
+- [x] API Key 认证
+- [x] 多租户管理页面
+- [x] 用户/API Key 管理
 - [ ] 错误边界
 - [ ] 移动端适配

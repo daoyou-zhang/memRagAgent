@@ -1,6 +1,10 @@
 """Knowledge 服务客户端
 
 负责与 Knowledge 服务通信，提供知识库 RAG 查询能力。
+
+配置：
+- 环境变量 KNOWLEDGE_SERVICE_URL: Knowledge 服务地址，默认 http://127.0.0.1:5001
+- 环境变量 INTERNAL_API_KEY: 服务间通信 API Key（使用管理员 Key）
 """
 import os
 from typing import Any, Dict, List, Optional
@@ -16,7 +20,25 @@ class KnowledgeClient:
         self.base_url = (base_url or os.getenv("KNOWLEDGE_SERVICE_URL", "http://127.0.0.1:5001")).rstrip("/")
         self.timeout = timeout
         self._client: Optional[httpx.AsyncClient] = None
+        # 服务间通信使用内部 API Key（管理员权限）
+        self.api_key = os.getenv("INTERNAL_API_KEY") or os.getenv("ADMIN_API_KEY")
         logger.info(f"KnowledgeClient 初始化: {self.base_url}")
+    
+    def _get_headers(self, project_id: Optional[str] = None, user_api_key: Optional[str] = None) -> Dict[str, str]:
+        """获取请求头（含认证信息）
+        
+        Args:
+            project_id: 项目 ID
+            user_api_key: 用户的 API Key（优先使用，保持租户隔离）
+        """
+        headers = {}
+        # 优先使用用户的 API Key，其次使用服务内部 Key
+        api_key = user_api_key or self.api_key
+        if api_key:
+            headers["X-API-Key"] = api_key
+        if project_id:
+            headers["X-Project-Id"] = project_id
+        return headers
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
@@ -48,6 +70,7 @@ class KnowledgeClient:
         top_k: int = 5,
         required_tags: Optional[List[str]] = None,
         preferred_tags: Optional[List[str]] = None,
+        user_api_key: Optional[str] = None,
     ) -> Dict[str, Any]:
         """知识库 RAG 查询
         
@@ -59,6 +82,7 @@ class KnowledgeClient:
             top_k: 返回结果数量
             required_tags: 必须匹配的标签
             preferred_tags: 优先匹配的标签
+            user_api_key: 用户的 API Key（保持租户隔离）
             
         Returns:
             {
@@ -84,7 +108,8 @@ class KnowledgeClient:
             if preferred_tags:
                 payload["preferred_tags"] = preferred_tags
 
-            resp = await client.post("/api/knowledge/rag/query", json=payload)
+            headers = self._get_headers(project_id, user_api_key)
+            resp = await client.post("/api/knowledge/rag/query", json=payload, headers=headers)
             resp.raise_for_status()
             return resp.json()
             
@@ -99,6 +124,7 @@ class KnowledgeClient:
         self,
         project_id: Optional[str] = None,
         domain: Optional[str] = None,
+        user_api_key: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """获取知识库集合列表"""
         try:
@@ -109,7 +135,8 @@ class KnowledgeClient:
             if domain:
                 params["domain"] = domain
             
-            resp = await client.get("/api/knowledge/collections", params=params)
+            headers = self._get_headers(project_id, user_api_key)
+            resp = await client.get("/api/knowledge/collections", params=params, headers=headers)
             resp.raise_for_status()
             data = resp.json()
             return data.get("items", [])

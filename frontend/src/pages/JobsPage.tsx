@@ -13,8 +13,8 @@ import {
 } from '../api/jobs'
 
 function JobsPage() {
-  const [formUserId, setFormUserId] = useState('48eedcd8-ed89-464c-8109-7bcb6fe94e36')
-  const [formProjectId, setFormProjectId] = useState('DAOYOUTEST')
+  const [formUserId, setFormUserId] = useState('')
+  const [formProjectId, setFormProjectId] = useState('')
   const [formSessionId, setFormSessionId] = useState('')
   const [formStartId, setFormStartId] = useState('1')
   const [formEndId, setFormEndId] = useState('100')

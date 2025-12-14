@@ -8,13 +8,14 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 from pathlib import Path
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, g
 from loguru import logger
 from sqlalchemy.orm import Session
 
 # 添加 shared 模块路径
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
+from shared.auth import flask_auth_required, apply_project_filter, Scopes
 from repository.db_session import SessionLocal
 from models.knowledge import KnowledgeCollection, KnowledgeDocument, KnowledgeChunk
 from processing.text_processing import TextProcessor
@@ -95,6 +96,7 @@ def health() -> tuple[object, int]:
 
 
 @knowledge_bp.post("/collections")
+@flask_auth_required(scopes=[Scopes.WRITE_KNOWLEDGE])
 def create_collection():
     payload = request.get_json(force=True) or {}
 
@@ -143,15 +145,17 @@ def create_collection():
 
 
 @knowledge_bp.get("/collections")
+@flask_auth_required(scopes=[Scopes.READ_KNOWLEDGE])
 def list_collections():
-    project_id = request.args.get("project_id")
     domain = request.args.get("domain")
 
     db: Session = SessionLocal()
     try:
         q = db.query(KnowledgeCollection)
-        if project_id:
-            q = q.filter(KnowledgeCollection.project_id == project_id)
+        
+        # 应用租户隔离
+        q = apply_project_filter(q, KnowledgeCollection)
+                
         if domain:
             q = q.filter(KnowledgeCollection.domain == domain)
 
@@ -177,6 +181,7 @@ def list_collections():
 
 
 @knowledge_bp.delete("/documents/<int:document_id>")
+@flask_auth_required(scopes=[Scopes.DELETE_KNOWLEDGE])
 def delete_document(document_id: int):
     """物理删除单个文档及其所有 chunks。
 
@@ -187,9 +192,17 @@ def delete_document(document_id: int):
 
     db: Session = SessionLocal()
     try:
-        doc = db.query(KnowledgeDocument).filter(KnowledgeDocument.id == document_id).first()
+        # 关联 collection 以实现租户隔离检查
+        q = db.query(KnowledgeDocument).join(
+            KnowledgeCollection, KnowledgeDocument.collection_id == KnowledgeCollection.id
+        ).filter(KnowledgeDocument.id == document_id)
+        
+        # 应用租户隔离
+        q = apply_project_filter(q, KnowledgeCollection)
+        
+        doc = q.first()
         if not doc:
-            return jsonify({"error": "document not found"}), 404
+            return jsonify({"error": "document not found or access denied"}), 404
 
         # 先删除该文档下的所有 chunks
         deleted_chunks = (
@@ -212,6 +225,7 @@ def delete_document(document_id: int):
 
 
 @knowledge_bp.post("/collections/<int:collection_id>/reset")
+@flask_auth_required(scopes=[Scopes.DELETE_KNOWLEDGE])
 def reset_collection(collection_id: int):
     """清空指定集合下的所有文档及 chunks，保留集合记录本身。
 
@@ -221,13 +235,13 @@ def reset_collection(collection_id: int):
 
     db: Session = SessionLocal()
     try:
-        col = (
-            db.query(KnowledgeCollection)
-            .filter(KnowledgeCollection.id == collection_id)
-            .first()
-        )
+        # 租户隔离检查
+        q = db.query(KnowledgeCollection).filter(KnowledgeCollection.id == collection_id)
+        q = apply_project_filter(q, KnowledgeCollection)
+        
+        col = q.first()
         if not col:
-            return jsonify({"error": "collection not found"}), 404
+            return jsonify({"error": "collection not found or access denied"}), 404
 
         # 找出该集合下的所有文档 ID
         doc_ids = [
@@ -268,6 +282,7 @@ def reset_collection(collection_id: int):
 
 
 @knowledge_bp.post("/rag/query")
+@flask_auth_required(scopes=[Scopes.READ_KNOWLEDGE])
 def knowledge_rag_query():
     """知识库 RAG 查询：基于 knowledge_chunks 的 embedding 做向量检索。
 
@@ -330,12 +345,13 @@ def knowledge_rag_query():
             KnowledgeDocument, KnowledgeChunk.document_id == KnowledgeDocument.id
         ).join(KnowledgeCollection, KnowledgeDocument.collection_id == KnowledgeCollection.id)
 
+        # 应用租户隔离
+        q = apply_project_filter(q, KnowledgeCollection)
+
         if collection_ids:
             q = q.filter(KnowledgeDocument.collection_id.in_(collection_ids))
         if domain:
             q = q.filter(KnowledgeCollection.domain == domain)
-        if project_id:
-            q = q.filter(KnowledgeCollection.project_id == project_id)
 
         # 为避免一次取太多，先限制最大候选数
         max_candidates = int(payload.get("max_candidates", 1000))
@@ -465,6 +481,7 @@ def knowledge_rag_query():
 
 
 @knowledge_bp.post("/documents/<int:document_id>/index")
+@flask_auth_required(scopes=[Scopes.WRITE_KNOWLEDGE])
 def index_document(document_id: int):
     """为指定文档执行索引：读取 source_uri → 分块 → 生成向量 → 写入 knowledge_chunks。
 
@@ -475,9 +492,17 @@ def index_document(document_id: int):
 
     db: Session = SessionLocal()
     try:
-        doc = db.query(KnowledgeDocument).filter(KnowledgeDocument.id == document_id).first()
+        # 关联 collection 以实现租户隔离检查
+        q = db.query(KnowledgeDocument).join(
+            KnowledgeCollection, KnowledgeDocument.collection_id == KnowledgeCollection.id
+        ).filter(KnowledgeDocument.id == document_id)
+        
+        # 应用租户隔离
+        q = apply_project_filter(q, KnowledgeCollection)
+        
+        doc = q.first()
         if not doc:
-            return jsonify({"error": "document not found"}), 404
+            return jsonify({"error": "document not found or access denied"}), 404
 
         # 若当前已在索引中，则直接返回，避免重复触发
         if doc.status == "indexing":
@@ -665,6 +690,7 @@ def index_document(document_id: int):
 
 
 @knowledge_bp.post("/documents")
+@flask_auth_required(scopes=[Scopes.WRITE_KNOWLEDGE])
 def create_document():
     payload = request.get_json(force=True) or {}
 
@@ -679,6 +705,12 @@ def create_document():
 
     db: Session = SessionLocal()
     try:
+        # 租户隔离：验证用户有权访问该 collection
+        q = db.query(KnowledgeCollection).filter(KnowledgeCollection.id == int(collection_id))
+        q = apply_project_filter(q, KnowledgeCollection)
+        if not q.first():
+            return jsonify({"error": "collection not found or access denied"}), 404
+        
         doc = KnowledgeDocument(
             collection_id=int(collection_id),
             external_id=external_id,
@@ -711,13 +743,21 @@ def create_document():
 
 
 @knowledge_bp.get("/documents")
+@flask_auth_required(scopes=[Scopes.READ_KNOWLEDGE])
 def list_documents():
     collection_id = request.args.get("collection_id")
     status = request.args.get("status")
 
     db: Session = SessionLocal()
     try:
-        q = db.query(KnowledgeDocument)
+        # 关联 collection 以实现租户隔离
+        q = db.query(KnowledgeDocument).join(
+            KnowledgeCollection, KnowledgeDocument.collection_id == KnowledgeCollection.id
+        )
+        
+        # 应用租户隔离
+        q = apply_project_filter(q, KnowledgeCollection)
+        
         if collection_id:
             q = q.filter(KnowledgeDocument.collection_id == int(collection_id))
         if status:
@@ -745,9 +785,18 @@ def list_documents():
 
 
 @knowledge_bp.get("/documents/<int:document_id>/chunks")
+@flask_auth_required(scopes=[Scopes.READ_KNOWLEDGE])
 def list_chunks(document_id: int):
     db: Session = SessionLocal()
     try:
+        # 先验证对文档的访问权限（租户隔离）
+        doc_q = db.query(KnowledgeDocument).join(
+            KnowledgeCollection, KnowledgeDocument.collection_id == KnowledgeCollection.id
+        ).filter(KnowledgeDocument.id == document_id)
+        doc_q = apply_project_filter(doc_q, KnowledgeCollection)
+        if not doc_q.first():
+            return jsonify({"error": "document not found or access denied"}), 404
+        
         q = (
             db.query(KnowledgeChunk)
             .filter(KnowledgeChunk.document_id == document_id)
@@ -775,6 +824,7 @@ def list_chunks(document_id: int):
 
 
 @knowledge_bp.post("/chunks/ingest")
+@flask_auth_required(scopes=[Scopes.WRITE_KNOWLEDGE])
 def ingest_chunk():
     """直接写入单个知识块（用于知识沉淀）
     
@@ -804,24 +854,29 @@ def ingest_chunk():
     if not text:
         return jsonify({"error": "field 'text' is required"}), 400
     
+    # 获取租户上下文中的 project_id
+    ctx = getattr(g, "tenant_ctx", {}) or {}
+    ctx_project_id = ctx.get("project_id")
+    
     db: Session = SessionLocal()
     try:
         # 1. 获取或创建集合
         if collection_id:
-            col = db.query(KnowledgeCollection).filter(
-                KnowledgeCollection.id == collection_id
-            ).first()
+            q = db.query(KnowledgeCollection).filter(KnowledgeCollection.id == collection_id)
+            q = apply_project_filter(q, KnowledgeCollection)
+            col = q.first()
             if not col:
-                return jsonify({"error": f"collection {collection_id} not found"}), 404
+                return jsonify({"error": f"collection {collection_id} not found or access denied"}), 404
         else:
-            # 按 domain 查找或创建
-            col = db.query(KnowledgeCollection).filter(
-                KnowledgeCollection.domain == domain
-            ).first()
+            # 按 domain + project_id 查找或创建
+            q = db.query(KnowledgeCollection).filter(KnowledgeCollection.domain == domain)
+            q = apply_project_filter(q, KnowledgeCollection)
+            col = q.first()
             if not col:
                 col = KnowledgeCollection(
                     name=f"{domain}_auto",
                     domain=domain,
+                    project_id=ctx_project_id,  # 绑定到当前租户
                     description=f"Auto-created collection for {domain}",
                 )
                 db.add(col)

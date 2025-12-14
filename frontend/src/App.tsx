@@ -15,6 +15,7 @@ import GraphPage from './pages/GraphPage'
 import CognitivePage from './pages/CognitivePage'
 import TenantsPage from './pages/TenantsPage'
 import SystemStatusPage from './pages/SystemStatusPage'
+import SettingsPage from './pages/SettingsPage'
 
 // 导航配置
 const navGroups = [
@@ -55,6 +56,7 @@ const navGroups = [
     items: [
       { path: '/tenants', label: '多租户管理', icon: '🏢' },
       { path: '/system', label: '系统状态', icon: '📊' },
+      { path: '/settings', label: '设置', icon: '⚙️' },
     ]
   },
 ]
@@ -162,6 +164,7 @@ function AppShell() {
             <Route path="/cognitive" element={<CognitivePage />} />
             <Route path="/tenants" element={<TenantsPage />} />
             <Route path="/system" element={<SystemStatusPage />} />
+            <Route path="/settings" element={<SettingsPage />} />
             <Route path="*" element={
               <div className="empty-state">
                 <div className="empty-state-icon">🔍</div>

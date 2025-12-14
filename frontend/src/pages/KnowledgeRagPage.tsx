@@ -3,7 +3,7 @@ import { listCollections, type KnowledgeCollection } from '../api/knowledge'
 import { knowledgeRagQuery, type KnowledgeRagResponse } from '../api/knowledgeRag'
 
 function KnowledgeRagPage() {
-  const [projectId, setProjectId] = useState('DAOYOUTEST')
+  const [projectId, setProjectId] = useState('')
   const [domain, setDomain] = useState('')
   const [collections, setCollections] = useState<KnowledgeCollection[]>([])
   const [selectedCollectionIds, setSelectedCollectionIds] = useState<number[]>([])

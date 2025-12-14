@@ -4,7 +4,7 @@ import { cleanupMemories, type CleanupMode, type CleanupResponse } from '../api/
 function MemoryCleanupPage() {
   const [mode, setMode] = useState<CleanupMode>('by_user')
   const [userId, setUserId] = useState('')
-  const [projectId, setProjectId] = useState('DAOYOUTEST')
+  const [projectId, setProjectId] = useState('')
   const [includeEpisodic, setIncludeEpisodic] = useState(true)
   const [includeSemantic, setIncludeSemantic] = useState(true)
   const [before, setBefore] = useState('')

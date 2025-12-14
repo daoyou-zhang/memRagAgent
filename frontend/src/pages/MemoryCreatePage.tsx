@@ -6,8 +6,8 @@ function MemoryCreatePage() {
   const [health, setHealth] = useState<HealthResponse | null>(null)
   const [healthError, setHealthError] = useState<string | null>(null)
 
-  const [cmUserId, setCmUserId] = useState('48eedcd8-ed89-464c-8109-7bcb6fe94e36')
-  const [cmProjectId, setCmProjectId] = useState('DAOYOUTEST')
+  const [cmUserId, setCmUserId] = useState('')
+  const [cmProjectId, setCmProjectId] = useState('')
   const [cmType, setCmType] = useState('semantic')
   const [cmText, setCmText] = useState('')
   const [cmTags, setCmTags] = useState('profile, preference')

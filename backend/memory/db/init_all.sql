@@ -224,21 +224,4 @@ CREATE INDEX IF NOT EXISTS ix_sessions_tenant ON conversation_sessions(tenant_id
 ALTER TABLE memory_generation_jobs ADD COLUMN IF NOT EXISTS tenant_id INTEGER REFERENCES tenants(id);
 CREATE INDEX IF NOT EXISTS ix_jobs_tenant ON memory_generation_jobs(tenant_id);
 
--- ============================================================
--- 5. 初始化默认租户
--- ============================================================
 
-INSERT INTO tenants (code, name, type, status, max_users, max_storage_mb)
-VALUES ('default', '默认租户', 'personal', 'active', 100, 10000)
-ON CONFLICT (code) DO NOTHING;
-
--- 为默认租户创建默认用户组
-INSERT INTO user_groups (tenant_id, code, name, is_default)
-SELECT id, 'default', '默认组', TRUE
-FROM tenants WHERE code = 'default'
-ON CONFLICT (tenant_id, code) DO NOTHING;
-
--- ============================================================
--- 完成
--- ============================================================
-SELECT 'Memory 数据库初始化完成' AS status;

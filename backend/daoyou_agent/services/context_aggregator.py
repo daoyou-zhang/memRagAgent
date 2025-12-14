@@ -45,6 +45,7 @@ class ContextAggregator:
         session_id: Optional[str] = None,
         project_id: Optional[str] = None,
         context_config: Optional[Dict[str, Any]] = None,
+        user_api_key: Optional[str] = None,
     ) -> Dict[str, Any]:
         """获取认知上下文
         
@@ -58,6 +59,7 @@ class ContextAggregator:
                 - knowledge_limit: RAG 检索返回多少条
                 - enable_profile: 是否获取用户画像
                 - enable_knowledge: 是否查询知识库（默认 True）
+            user_api_key: 用户的 API Key（用于传递给内部服务，保持租户隔离）
                 - knowledge_domain: 知识库领域过滤
                 - enable_graph: 是否查询知识图谱（默认 True）
                 
@@ -98,6 +100,7 @@ class ContextAggregator:
                 session_id=session_id,
                 memory_depth=memory_depth,
                 knowledge_limit=knowledge_limit,
+                user_api_key=user_api_key,
             )))
         else:
             logger.warning(f"跳过 memRag: project_id={project_id}, session_id={session_id}")
@@ -109,6 +112,7 @@ class ContextAggregator:
                 project_id=project_id,
                 domain=knowledge_domain,
                 top_k=knowledge_limit,
+                user_api_key=user_api_key,
             )))
         
         # Graph 服务调用（知识图谱增强搜索）
@@ -116,6 +120,8 @@ class ContextAggregator:
             tasks.append(("graph", self._fetch_graph_context(
                 query=query,
                 domain=knowledge_domain,
+                project_id=project_id,
+                user_api_key=user_api_key,
             )))
 
         # 并行执行
@@ -154,6 +160,7 @@ class ContextAggregator:
         session_id: str,
         memory_depth: Optional[int],
         knowledge_limit: Optional[int],
+        user_api_key: Optional[str] = None,
     ) -> Dict[str, Any]:
         """获取 Memory 服务上下文"""
         return await self._memory_client.get_full_context(
@@ -163,6 +170,7 @@ class ContextAggregator:
             query=query,
             recent_message_limit=memory_depth,
             rag_top_k=knowledge_limit,
+            user_api_key=user_api_key,
         )
 
     async def _fetch_knowledge_context(
@@ -171,6 +179,7 @@ class ContextAggregator:
         project_id: Optional[str],
         domain: Optional[str],
         top_k: int,
+        user_api_key: Optional[str] = None,
     ) -> Dict[str, Any]:
         """获取 Knowledge 服务上下文"""
         return await self._knowledge_client.rag_query(
@@ -178,18 +187,31 @@ class ContextAggregator:
             project_id=project_id,
             domain=domain,
             top_k=top_k,
+            user_api_key=user_api_key,
         )
 
     async def _fetch_graph_context(
         self,
         query: str,
         domain: Optional[str],
+        project_id: Optional[str] = None,
+        user_api_key: Optional[str] = None,
     ) -> Dict[str, Any]:
         """获取知识图谱上下文"""
         import httpx
         import os
         
         knowledge_url = os.getenv("KNOWLEDGE_SERVICE_URL", "http://127.0.0.1:5001")
+        
+        # 优先使用用户的 API Key，保持租户隔离
+        api_key = user_api_key or os.getenv("INTERNAL_API_KEY") or os.getenv("ADMIN_API_KEY")
+        
+        # 构建请求头
+        headers = {}
+        if api_key:
+            headers["X-API-Key"] = api_key
+        if project_id:
+            headers["X-Project-Id"] = project_id
         
         try:
             async with httpx.AsyncClient(timeout=15) as client:
@@ -198,8 +220,10 @@ class ContextAggregator:
                     json={
                         "query": query,
                         "domain": domain,
+                        "project_id": project_id,
                         "top_k": 10,
-                    }
+                    },
+                    headers=headers,
                 )
                 if response.status_code == 200:
                     return response.json()

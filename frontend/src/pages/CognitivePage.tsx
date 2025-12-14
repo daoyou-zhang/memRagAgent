@@ -8,9 +8,9 @@ import {
 function CognitivePage() {
   // 表单字段
   const [input, setInput] = useState('')
-  const [userId, setUserId] = useState('test_user')
-  const [sessionId, setSessionId] = useState('s1')
-  const [projectId, setProjectId] = useState('p1')
+  const [userId, setUserId] = useState('')
+  const [sessionId, setSessionId] = useState('')
+  const [projectId, setProjectId] = useState('')
   const [enableMemory, setEnableMemory] = useState(true)
   const [memoryDepth, setMemoryDepth] = useState(5)
   const [ragLevel, setRagLevel] = useState(3)

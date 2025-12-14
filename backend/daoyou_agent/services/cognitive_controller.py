@@ -327,10 +327,24 @@ class CognitiveController:
         
         return f"【工具结果 - {tool_result.tool_name}】\n{str(result)}"
 
-    async def process_request(self, request: CognitiveRequest) -> CognitiveResponse:
-        """主认知处理流程。"""
+    async def process_request(
+        self, 
+        request: CognitiveRequest,
+        user_api_key: Optional[str] = None,
+        user_project_id: Optional[str] = None,
+    ) -> CognitiveResponse:
+        """主认知处理流程。
+        
+        Args:
+            request: 认知请求
+            user_api_key: 用户的 API Key（用于传递给内部服务）
+            user_project_id: 用户的 project_id（用于租户隔离）
+        """
         start_time = datetime.now()
         session_id = request.session_id or str(uuid.uuid4())
+        
+        # 使用用户的 project_id，优先使用传入的，其次使用请求中的
+        effective_project_id = user_project_id or request.project_id
 
         logger.info(f"开始处理认知请求: session_id={session_id}")
 
@@ -369,12 +383,13 @@ class CognitiveController:
             query=intent.query,
             user_id=request.user_id,
             session_id=session_id,
-            project_id=request.project_id,
+            project_id=effective_project_id,
             context_config={
                 "memory_depth": request.memory_depth,
                 "knowledge_limit": request.rag_level * 2 if request.rag_level > 0 else 0,
                 "enable_profile": True,
             },
+            user_api_key=user_api_key,
         )
 
         # 4. 构建回复 prompt 并调用 LLM
@@ -430,10 +445,20 @@ class CognitiveController:
         )
         return response
 
-    async def process_request_stream(self, request: CognitiveRequest):
+    async def process_request_stream(
+        self, 
+        request: CognitiveRequest,
+        user_api_key: Optional[str] = None,
+        user_project_id: Optional[str] = None,
+    ):
         """流式处理认知请求（SSE）
         
         与 process_request 流程相同，但回复生成部分使用流式输出。
+        
+        Args:
+            request: 认知请求
+            user_api_key: 用户的 API Key（用于传递给内部服务）
+            user_project_id: 用户的 project_id（用于租户隔离）
         
         SSE 事件格式:
         - event: intent     -> 意图分析结果
@@ -444,6 +469,9 @@ class CognitiveController:
         """
         start_time = datetime.now()
         session_id = request.session_id or str(uuid.uuid4())
+        
+        # 使用用户的 project_id
+        effective_project_id = user_project_id or request.project_id
         
         try:
             # 1. 意图理解
@@ -481,12 +509,13 @@ class CognitiveController:
                 query=request.input,
                 user_id=request.user_id,
                 session_id=session_id,
-                project_id=request.project_id,
+                project_id=effective_project_id,
                 context_config={
                     "memory_depth": request.memory_depth,
                     "knowledge_limit": request.rag_level * 2 if request.rag_level > 0 else 0,
                     "enable_profile": True,
                 },
+                user_api_key=user_api_key,
             )
             
             # 4. 构建回复 prompt

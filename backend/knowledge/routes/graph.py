@@ -4,16 +4,21 @@ import sys
 import hashlib
 from pathlib import Path
 
-from flask import Blueprint, jsonify, request, Response
+from flask import Blueprint, jsonify, request, Response, g
 from loguru import logger
 
 # 添加 shared 模块路径
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
+from shared.auth import flask_auth_required, Scopes
 from tools.graph_client import get_neo4j_driver
 
 
 graph_bp = Blueprint("graph", __name__)
+
+
+# 注意：图谱数据目前是全局共享的，不按 project_id 隔离
+# 如需隔离，需要在 Neo4j 节点中添加 project_id 属性
 
 
 def _get_cache_service():
@@ -314,6 +319,7 @@ def delete_relation():
 # ============================================================
 
 @graph_bp.route("/extract", methods=["POST"])
+@flask_auth_required(scopes=[Scopes.WRITE_KNOWLEDGE])
 def extract_entities():
     """从文本中抽取实体和关系，并写入图谱
     
@@ -335,9 +341,13 @@ def extract_entities():
     domain = data.get("domain")
     source_id = data.get("source_id")
     
+    # 获取租户上下文中的 project_id
+    ctx = getattr(g, "tenant_ctx", {}) or {}
+    project_id = ctx.get("project_id") or data.get("project_id")
+    
     try:
         service = get_graph_service()
-        result = service.build_graph_from_text(text, domain, source_id)
+        result = service.build_graph_from_text(text, domain, source_id, project_id)
         return jsonify(result)
     except Exception as e:
         logger.exception(f"[Graph] Extract error: {e}")
@@ -345,6 +355,7 @@ def extract_entities():
 
 
 @graph_bp.route("/search", methods=["POST"])
+@flask_auth_required(scopes=[Scopes.READ_KNOWLEDGE])
 def search_graph():
     """搜索图谱实体（带缓存）"""
     from services.graph_service import get_graph_service
@@ -358,9 +369,13 @@ def search_graph():
     entity_type = data.get("entity_type")
     limit = int(data.get("limit", 20))
     
-    # 尝试从缓存获取
+    # 获取租户上下文中的 project_id
+    ctx = getattr(g, "tenant_ctx", {}) or {}
+    project_id = ctx.get("project_id") or data.get("project_id")
+    
+    # 尝试从缓存获取（缓存 key 包含 project_id）
     cache = _get_cache_service()
-    cache_key = _graph_query_hash(f"search:{keyword}:{entity_type or ''}:{limit}")
+    cache_key = _graph_query_hash(f"search:{keyword}:{entity_type or ''}:{limit}:{project_id or ''}")
     if cache:
         cached = cache.get_graph(cache_key)
         if cached:
@@ -369,7 +384,7 @@ def search_graph():
     
     try:
         service = get_graph_service()
-        entities = service.search_entities(keyword, entity_type, limit)
+        entities = service.search_entities(keyword, entity_type, limit, project_id)
         result = {"entities": entities, "count": len(entities)}
         
         # 写入缓存
@@ -383,6 +398,7 @@ def search_graph():
 
 
 @graph_bp.route("/neighbors", methods=["POST"])
+@flask_auth_required(scopes=[Scopes.READ_KNOWLEDGE])
 def get_neighbors():
     """获取实体的邻居节点和关系（带缓存）"""
     from services.graph_service import get_graph_service
@@ -396,9 +412,13 @@ def get_neighbors():
     depth = int(data.get("depth", 1))
     limit = int(data.get("limit", 50))
     
-    # 尝试从缓存获取
+    # 获取租户上下文中的 project_id
+    ctx = getattr(g, "tenant_ctx", {}) or {}
+    project_id = ctx.get("project_id") or data.get("project_id")
+    
+    # 尝试从缓存获取（缓存 key 包含 project_id）
     cache = _get_cache_service()
-    cache_key = _graph_query_hash(f"neighbors:{entity_name}:{depth}:{limit}")
+    cache_key = _graph_query_hash(f"neighbors:{entity_name}:{depth}:{limit}:{project_id or ''}")
     if cache:
         cached = cache.get_graph(cache_key)
         if cached:
@@ -407,7 +427,7 @@ def get_neighbors():
     
     try:
         service = get_graph_service()
-        result = service.get_entity_neighbors(entity_name, depth, limit)
+        result = service.get_entity_neighbors(entity_name, depth, limit, project_id)
         response = {
             "entities": result.entities,
             "relations": result.relations,
@@ -424,6 +444,7 @@ def get_neighbors():
 
 
 @graph_bp.route("/path", methods=["POST"])
+@flask_auth_required(scopes=[Scopes.READ_KNOWLEDGE])
 def find_path():
     """查找两个实体之间的路径
     
@@ -445,9 +466,13 @@ def find_path():
     
     max_depth = int(data.get("max_depth", 4))
     
+    # 获取租户上下文中的 project_id
+    ctx = getattr(g, "tenant_ctx", {}) or {}
+    project_id = ctx.get("project_id") or data.get("project_id")
+    
     try:
         service = get_graph_service()
-        paths = service.find_path(source, target, max_depth)
+        paths = service.find_path(source, target, max_depth, project_id)
         return jsonify({"paths": paths, "count": len(paths)})
     except Exception as e:
         logger.exception(f"[Graph] Path error: {e}")
@@ -455,6 +480,7 @@ def find_path():
 
 
 @graph_bp.route("/enhanced_search", methods=["POST"])
+@flask_auth_required(scopes=[Scopes.READ_KNOWLEDGE])
 def enhanced_search():
     """图谱增强的语义搜索
     
@@ -478,9 +504,13 @@ def enhanced_search():
     domain = data.get("domain")
     top_k = int(data.get("top_k", 10))
     
+    # 获取租户上下文中的 project_id
+    ctx = getattr(g, "tenant_ctx", {}) or {}
+    project_id = ctx.get("project_id") or data.get("project_id")
+    
     try:
         service = get_graph_service()
-        result = service.graph_enhanced_search(query, domain, top_k)
+        result = service.graph_enhanced_search(query, domain, top_k, project_id)
         return jsonify(result)
     except Exception as e:
         import traceback
@@ -490,6 +520,7 @@ def enhanced_search():
 
 
 @graph_bp.route("/stats", methods=["GET"])
+@flask_auth_required(scopes=[Scopes.READ_KNOWLEDGE])
 def get_stats():
     """获取图谱统计信息"""
     from services.graph_service import get_graph_service
@@ -506,6 +537,7 @@ def get_stats():
 
 
 @graph_bp.route("/create_entity", methods=["POST"])
+@flask_auth_required(scopes=[Scopes.WRITE_KNOWLEDGE])
 def create_entity():
     """手动创建实体
     
@@ -529,13 +561,17 @@ def create_entity():
     domain = data.get("domain")
     properties = data.get("properties", {})
     
+    # 获取租户上下文中的 project_id
+    ctx = getattr(g, "tenant_ctx", {}) or {}
+    project_id = ctx.get("project_id") or data.get("project_id")
+    
     try:
         service = get_graph_service()
         entity = Entity(name=name, type=entity_type, properties=properties)
-        node_id = service.create_entity(entity, domain)
+        node_id = service.create_entity(entity, domain, project_id)
         
         if node_id is not None:
-            return jsonify({"success": True, "node_id": node_id})
+            return jsonify({"success": True, "node_id": node_id, "project_id": project_id})
         else:
             return jsonify({"success": False, "error": "Failed to create entity"}), 500
     except Exception as e:
@@ -546,6 +582,7 @@ def create_entity():
 
 
 @graph_bp.route("/create_relation", methods=["POST"])
+@flask_auth_required(scopes=[Scopes.WRITE_KNOWLEDGE])
 def create_relation():
     """手动创建关系
     
@@ -569,10 +606,14 @@ def create_relation():
     
     properties = data.get("properties", {})
     
+    # 获取租户上下文中的 project_id
+    ctx = getattr(g, "tenant_ctx", {}) or {}
+    project_id = ctx.get("project_id") or data.get("project_id")
+    
     try:
         service = get_graph_service()
         relation = Relation(source=source, target=target, type=rel_type, properties=properties)
-        success = service.create_relation(relation)
+        success = service.create_relation(relation, project_id)
         
         return jsonify({"success": success})
     except Exception as e:

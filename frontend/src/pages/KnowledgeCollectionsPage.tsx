@@ -6,7 +6,7 @@ function KnowledgeCollectionsPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const [projectId, setProjectId] = useState('DAOYOUTEST')
+  const [projectId, setProjectId] = useState('')
   const [domainFilter, setDomainFilter] = useState('')
 
   const [newName, setNewName] = useState('示例知识库')

@@ -17,6 +17,7 @@ class Entity:
     name: str
     type: str  # Person, Concept, Event, Location, Organization, etc.
     properties: Dict[str, Any] = field(default_factory=dict)
+    project_id: str = ""  # 租户隔离
     
 
 @dataclass  
@@ -26,6 +27,7 @@ class Relation:
     target: str  # 目标实体名
     type: str    # 关系类型
     properties: Dict[str, Any] = field(default_factory=dict)
+    project_id: str = ""  # 租户隔离
 
 
 @dataclass
@@ -179,50 +181,63 @@ class KnowledgeGraphService:
     
     # ========== 图谱操作 ==========
     
-    def create_entity(self, entity: Entity, domain: str = None) -> Optional[int]:
+    def create_entity(self, entity: Entity, domain: str = None, project_id: str = None) -> Optional[int]:
         """创建实体节点
+        
+        Args:
+            entity: 实体对象
+            domain: 领域
+            project_id: 租户隔离 ID（关键：不同租户的同名实体是不同节点）
         
         Returns:
             节点 ID，失败返回 None
         """
+        pid = project_id or entity.project_id or ""
         with self.driver.session() as session:
-            # 使用 MERGE 避免重复
+            # 使用 MERGE 避免重复，project_id 作为唯一性约束的一部分
             cypher = f"""
-            MERGE (n:{entity.type} {{name: $name}})
+            MERGE (n:{entity.type} {{name: $name, project_id: $project_id}})
             ON CREATE SET n.created_at = datetime(), n.domain = $domain
             ON MATCH SET n.updated_at = datetime()
             SET n += $properties
-            RETURN id(n) as node_id
+            RETURN elementId(n) as node_id
             """
             result = session.run(
                 cypher,
                 name=entity.name,
+                project_id=pid,
                 domain=domain or "",
                 properties=entity.properties,
             )
             record = result.single()
             return record["node_id"] if record else None
     
-    def create_relation(self, relation: Relation) -> bool:
+    def create_relation(self, relation: Relation, project_id: str = None) -> bool:
         """创建关系
+        
+        Args:
+            relation: 关系对象
+            project_id: 租户隔离 ID
         
         Returns:
             是否成功
         """
+        pid = project_id or relation.project_id or ""
         with self.driver.session() as session:
-            # 动态匹配源和目标节点（不限制类型）
+            # 动态匹配源和目标节点（按 project_id 隔离）
             cypher = f"""
-            MATCH (a {{name: $source}})
-            MATCH (b {{name: $target}})
+            MATCH (a {{name: $source, project_id: $project_id}})
+            MATCH (b {{name: $target, project_id: $project_id}})
             MERGE (a)-[r:{relation.type}]->(b)
-            ON CREATE SET r.created_at = datetime()
+            ON CREATE SET r.created_at = datetime(), r.project_id = $project_id
             SET r += $properties
-            RETURN id(r) as rel_id
+            RETURN elementId(r) as rel_id
             """
             result = session.run(
                 cypher,
                 source=relation.source,
                 target=relation.target,
+                project_id=pid,
                 properties=relation.properties,
             )
             record = result.single()
@@ -233,6 +248,7 @@ class KnowledgeGraphService:
         text: str, 
         domain: str = None,
         source_id: str = None,
+        project_id: str = None,
     ) -> Dict[str, Any]:
         """从文本构建知识图谱
         
@@ -242,6 +258,7 @@ class KnowledgeGraphService:
             text: 输入文本
             domain: 领域标识
             source_id: 来源标识（如 chunk_id）
+            project_id: 租户隔离 ID（关键：不同租户的图谱隔离）
         
         Returns:
             构建结果统计
@@ -261,12 +278,12 @@ class KnowledgeGraphService:
         for entity in entities:
             if source_id:
                 entity.properties["source_id"] = source_id
-            node_id = self.create_entity(entity, domain)
+            node_id = self.create_entity(entity, domain, project_id)
             if node_id is not None:
                 created_entities += 1
         
         for relation in relations:
-            if self.create_relation(relation):
+            if self.create_relation(relation, project_id):
                 created_relations += 1
         
         return {
@@ -285,6 +302,7 @@ class KnowledgeGraphService:
         keyword: str, 
         entity_type: str = None,
         limit: int = 20,
+        project_id: str = None,
     ) -> List[Dict]:
         """搜索实体
         
@@ -292,27 +310,31 @@ class KnowledgeGraphService:
             keyword: 关键词（模糊匹配 name）
             entity_type: 实体类型过滤
             limit: 返回数量
+            project_id: 租户隔离 ID
         
         Returns:
             实体列表
         """
         with self.driver.session() as session:
+            # 构建 project_id 过滤条件
+            pid_filter = "AND n.project_id = $project_id" if project_id else ""
+            
             if entity_type:
                 cypher = f"""
                 MATCH (n:{entity_type})
-                WHERE n.name CONTAINS $keyword
-                RETURN n, labels(n) as labels, id(n) as node_id
+                WHERE n.name CONTAINS $keyword {pid_filter}
+                RETURN n, labels(n) as labels, elementId(n) as node_id
                 LIMIT $limit
                 """
             else:
-                cypher = """
+                cypher = f"""
                 MATCH (n)
-                WHERE n.name CONTAINS $keyword
-                RETURN n, labels(n) as labels, id(n) as node_id
+                WHERE n.name CONTAINS $keyword {pid_filter}
+                RETURN n, labels(n) as labels, elementId(n) as node_id
                 LIMIT $limit
                 """
             
-            result = session.run(cypher, keyword=keyword, limit=limit)
+            result = session.run(cypher, keyword=keyword, limit=limit, project_id=project_id or "")
             
             entities = []
             for record in result:
@@ -322,6 +344,7 @@ class KnowledgeGraphService:
                     "name": node.get("name"),
                     "type": record["labels"][0] if record["labels"] else "Unknown",
                     "properties": dict(node),
+                    "project_id": node.get("project_id", ""),
                 })
             
             return entities
@@ -331,6 +354,7 @@ class KnowledgeGraphService:
         entity_name: str,
         depth: int = 1,
         limit: int = 50,
+        project_id: str = None,
     ) -> GraphSearchResult:
         """获取实体的邻居节点和关系
         
@@ -338,31 +362,31 @@ class KnowledgeGraphService:
             entity_name: 实体名称
             depth: 搜索深度
             limit: 返回数量
+            project_id: 租户隔离 ID
         
         Returns:
             GraphSearchResult
         """
         with self.driver.session() as session:
-            cypher = f"""
-            MATCH (center {{name: $name}})
-            CALL apoc.path.subgraphAll(center, {{
-                maxLevel: $depth,
-                limit: $limit
-            }})
-            YIELD nodes, relationships
-            RETURN nodes, relationships
-            """
-            
-            # 简化版（不依赖 APOC）
-            cypher = f"""
-            MATCH path = (center {{name: $name}})-[r*1..{depth}]-(neighbor)
-            WITH center, collect(DISTINCT neighbor) as neighbors, collect(DISTINCT r) as rels
-            RETURN center, neighbors, rels
-            LIMIT 1
-            """
+            # 简化版（不依赖 APOC），按 project_id 隔离
+            if project_id:
+                cypher = f"""
+                MATCH path = (center {{name: $name, project_id: $project_id}})-[r*1..{depth}]-(neighbor)
+                WHERE neighbor.project_id = $project_id
+                WITH center, collect(DISTINCT neighbor) as neighbors, collect(DISTINCT r) as rels
+                RETURN center, neighbors, rels
+                LIMIT 1
+                """
+            else:
+                cypher = f"""
+                MATCH path = (center {{name: $name}})-[r*1..{depth}]-(neighbor)
+                WITH center, collect(DISTINCT neighbor) as neighbors, collect(DISTINCT r) as rels
+                RETURN center, neighbors, rels
+                LIMIT 1
+                """
             
             try:
-                result = session.run(cypher, name=entity_name, depth=depth, limit=limit)
+                result = session.run(cypher, name=entity_name, depth=depth, limit=limit, project_id=project_id or "")
                 record = result.single()
                 
                 if not record:
@@ -416,6 +440,7 @@ class KnowledgeGraphService:
         source_name: str,
         target_name: str,
         max_depth: int = 4,
+        project_id: str = None,
     ) -> List[Dict]:
         """查找两个实体之间的路径
         
@@ -423,20 +448,31 @@ class KnowledgeGraphService:
             source_name: 源实体名
             target_name: 目标实体名
             max_depth: 最大深度
+            project_id: 租户隔离 ID
         
         Returns:
             路径列表
         """
         with self.driver.session() as session:
-            cypher = f"""
-            MATCH path = shortestPath(
-                (a {{name: $source}})-[*1..{max_depth}]-(b {{name: $target}})
-            )
-            RETURN path
-            LIMIT 5
-            """
+            # 按 project_id 隔离
+            if project_id:
+                cypher = f"""
+                MATCH path = shortestPath(
+                    (a {{name: $source, project_id: $project_id}})-[*1..{max_depth}]-(b {{name: $target, project_id: $project_id}})
+                )
+                RETURN path
+                LIMIT 5
+                """
+            else:
+                cypher = f"""
+                MATCH path = shortestPath(
+                    (a {{name: $source}})-[*1..{max_depth}]-(b {{name: $target}})
+                )
+                RETURN path
+                LIMIT 5
+                """
             
-            result = session.run(cypher, source=source_name, target=target_name)
+            result = session.run(cypher, source=source_name, target=target_name, project_id=project_id or "")
             
             paths = []
             for record in result:
@@ -472,6 +508,7 @@ class KnowledgeGraphService:
         query: str,
         domain: str = None,
         top_k: int = 10,
+        project_id: str = None,
     ) -> Dict[str, Any]:
         """图谱增强的语义搜索
         
@@ -485,6 +522,7 @@ class KnowledgeGraphService:
             query: 查询文本
             domain: 领域过滤
             top_k: 返回数量
+            project_id: 租户隔离 ID
         
         Returns:
             图谱上下文
@@ -498,7 +536,7 @@ class KnowledgeGraphService:
             all_entities = []
             for kw in keywords:
                 if len(kw) >= 2:
-                    all_entities.extend(self.search_entities(kw, limit=5))
+                    all_entities.extend(self.search_entities(kw, limit=5, project_id=project_id))
             
             return {
                 "query_entities": [],
@@ -512,8 +550,8 @@ class KnowledgeGraphService:
         all_relations = []
         
         for entity in query_entities:
-            # 精确匹配
-            result = self.get_entity_neighbors(entity.name, depth=1, limit=20)
+            # 精确匹配（按 project_id 隔离）
+            result = self.get_entity_neighbors(entity.name, depth=1, limit=20, project_id=project_id)
             all_entities.extend(result.entities)
             all_relations.extend(result.relations)
         
