@@ -11,14 +11,20 @@
 - reflection_low_score: 低分反馈积累触发
 - manual: 手动触发优化
 """
+import os
 import json
+import httpx
 from datetime import datetime
 from typing import Any, Dict, List, Optional
+from loguru import logger
 
 from sqlalchemy.orm import Session
 
 from models.memory import PromptEvolutionHistory
 from repository.db_session import SessionLocal
+
+# Agent 服务 URL
+AGENT_SERVICE_URL = os.getenv("AGENT_SERVICE_URL", "http://127.0.0.1:8000")
 
 
 class PromptEvolutionService:
@@ -134,7 +140,7 @@ class PromptEvolutionService:
     def apply_evolution(self, evolution_id: int) -> Dict[str, Any]:
         """应用进化建议
         
-        将建议应用到 prompt_configs 表（用户/项目级）
+        通过调用 daoyou_agent 的 Prompt API 创建/更新配置
         """
         db: Session = SessionLocal()
         try:
@@ -148,26 +154,108 @@ class PromptEvolutionService:
             if record.status != "pending":
                 return {"success": False, "error": f"Cannot apply evolution with status: {record.status}"}
             
-            # TODO: 实际应用到 prompt_configs 表
-            # 这里需要连接 daoyou 数据库的 prompt_configs 表
-            # 暂时只更新状态
+            # 保存当前 prompt 用于回滚
+            before_prompt = self._get_current_prompt(record)
+            record.before_prompt = before_prompt
+            
+            # 通过 API 应用新的 prompt
+            apply_result = self._apply_prompt_via_api(record)
+            
+            if not apply_result.get("success"):
+                return apply_result
             
             record.status = "applied"
             record.applied_at = datetime.now()
             db.commit()
             
+            logger.info(f"进化建议 {evolution_id} 已应用")
+            
             return {
                 "success": True,
                 "evolution_id": evolution_id,
                 "status": "applied",
+                "config_id": apply_result.get("config_id"),
                 "message": "Evolution applied successfully",
             }
             
         except Exception as e:
             db.rollback()
+            logger.error(f"应用进化建议失败: {e}")
             return {"success": False, "error": str(e)}
         finally:
             db.close()
+    
+    def _get_current_prompt(self, record: PromptEvolutionHistory) -> Optional[str]:
+        """获取当前 prompt（用于回滚）"""
+        try:
+            # 构建查询参数
+            params = {}
+            if record.category:
+                params["category"] = record.category
+            if record.project_id:
+                params["project_id"] = record.project_id
+            
+            with httpx.Client(timeout=10.0) as client:
+                resp = client.get(
+                    f"{AGENT_SERVICE_URL}/api/v1/prompts/default",
+                    params=params
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    # 根据 prompt_type 获取对应字段
+                    prompt_type = record.prompt_type or "response_system"
+                    return data.get(f"{prompt_type}_prompt", "")
+        except Exception as e:
+            logger.warning(f"获取当前 prompt 失败: {e}")
+        return None
+    
+    def _apply_prompt_via_api(self, record: PromptEvolutionHistory) -> Dict[str, Any]:
+        """通过 API 应用 prompt 配置"""
+        try:
+            # 构建配置名称
+            config_name = f"evolution_{record.id}"
+            if record.user_id:
+                config_name = f"user_{record.user_id}_{config_name}"
+            elif record.project_id:
+                config_name = f"project_{record.project_id}_{config_name}"
+            
+            # 构建请求体
+            payload = {
+                "category": record.category or "evolved",
+                "project_id": record.project_id,
+                "name": config_name,
+                "description": f"自进化生成 - {record.trigger_reason[:100] if record.trigger_reason else ''}",
+            }
+            
+            # 根据 prompt_type 设置对应字段
+            prompt_type = record.prompt_type or "response_system"
+            if record.after_prompt:
+                if "intent" in prompt_type:
+                    payload["intent_system_prompt"] = record.after_prompt
+                else:
+                    payload["response_system_prompt"] = record.after_prompt
+            
+            with httpx.Client(timeout=10.0) as client:
+                resp = client.post(
+                    f"{AGENT_SERVICE_URL}/api/v1/prompts/configs",
+                    json=payload
+                )
+                
+                if resp.status_code in [200, 201]:
+                    data = resp.json()
+                    return {
+                        "success": True,
+                        "config_id": data.get("id"),
+                    }
+                else:
+                    return {
+                        "success": False,
+                        "error": f"API 返回 {resp.status_code}: {resp.text}",
+                    }
+                    
+        except Exception as e:
+            logger.error(f"调用 Prompt API 失败: {e}")
+            return {"success": False, "error": str(e)}
     
     def reject_evolution(self, evolution_id: int, reason: str = "") -> Dict[str, Any]:
         """拒绝进化建议"""

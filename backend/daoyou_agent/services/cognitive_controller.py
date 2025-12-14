@@ -33,8 +33,9 @@ from ..models.cognitive import (
     ReasoningStep,
     PerformanceMetrics,
 )
-from ..config.prompts import get_prompt_config, get_prompt_for_context, PromptConfig
+from ..config.prompts import get_prompt_config, PromptConfig
 from ..models.mcp_tool import ToolResult
+from ..services.prompt_service import get_prompt_service
 from .context_aggregator import get_context_aggregator
 from .ai_service_adapter import get_intent_client, get_response_client, get_ai_service, LLMClient, LLMConfig
 from .memory_client import get_memory_client
@@ -60,14 +61,61 @@ class CognitiveController:
         self.default_prompt_config = get_prompt_config()
         logger.info("道友认知控制器初始化完成（支持 MCP 工具调用）")
 
-    def _get_prompt_config(self, request: CognitiveRequest) -> PromptConfig:
-        """获取 prompt 配置，支持请求级别覆盖。"""
-        return self.default_prompt_config.override(
-            intent_system=request.intent_system_prompt,
-            intent_user=request.intent_user_prompt,
-            response_system=request.response_system_prompt,
-            response_user=request.response_user_prompt,
-        )
+    def _get_prompt_config(
+        self, 
+        request: CognitiveRequest,
+        category: Optional[str] = None,
+    ) -> PromptConfig:
+        """获取 prompt 配置
+        
+        优先级（从低到高）：
+        1. 代码默认 prompt（原则性，不变）
+        2. 数据库 category/industry 配置
+        3. 数据库 project 配置
+        4. 请求参数（最高）
+        
+        Args:
+            request: 认知请求
+            category: 意图类别（可选，用于行业 prompt）
+        """
+        # 1. 基础：代码默认 prompt（原则性内容）
+        config = self.default_prompt_config
+        
+        # 2. 叠加数据库 category 配置
+        effective_category = category or getattr(request, 'industry', None)
+        if effective_category:
+            db_category_config = get_prompt_service().get_by_category(effective_category)
+            if db_category_config:
+                config = config.override(
+                    intent_system=db_category_config.get("intent_system_prompt"),
+                    response_system=db_category_config.get("response_system_prompt"),
+                    response_user=db_category_config.get("response_user_template"),
+                )
+                logger.debug(f"应用数据库 category 配置: {effective_category}")
+        
+        # 3. 叠加数据库 project 配置（优先级高于 category）
+        if request.project_id:
+            db_project_config = get_prompt_service().get_by_project(request.project_id)
+            if db_project_config:
+                config = config.override(
+                    intent_system=db_project_config.get("intent_system_prompt"),
+                    response_system=db_project_config.get("response_system_prompt"),
+                    response_user=db_project_config.get("response_user_template"),
+                )
+                logger.debug(f"应用数据库 project 配置: {request.project_id}")
+        
+        # 4. 叠加请求参数（最高优先级）
+        if any([request.intent_system_prompt, request.intent_user_prompt, 
+                request.response_system_prompt, request.response_user_prompt]):
+            config = config.override(
+                intent_system=request.intent_system_prompt,
+                intent_user=request.intent_user_prompt,
+                response_system=request.response_system_prompt,
+                response_user=request.response_user_prompt,
+            )
+            logger.debug("应用请求参数 prompt 覆盖")
+        
+        return config
 
     def _get_response_client(self, request: CognitiveRequest) -> LLMClient:
         """获取回复生成客户端，支持用户自定义模型配置。
@@ -297,17 +345,11 @@ class CognitiveController:
         )
         logger.info(f"意图分析完成: category={intent.category}, confidence={intent.confidence}, needs_tool={intent.needs_tool}")
 
-        # 1.5 根据意图类别切换行业 Prompt（如果请求没有覆盖）
-        if not request.response_system_prompt:
-            # 根据 category 获取行业 Prompt
-            industry_prompt = get_prompt_for_context(
-                project_id=request.project_id,
-                industry=intent.category,
-            )
-            prompt_config = prompt_config.override(
-                response_system=industry_prompt.response_system_prompt,
-            )
-            logger.debug(f"已切换到行业 Prompt: {intent.category}")
+        # 1.5 根据意图类别重新获取 Prompt（使用数据库优先级）
+        if not request.response_system_prompt and intent.category:
+            # 重新获取 prompt，带上意图分析得到的 category
+            prompt_config = self._get_prompt_config(request, category=intent.category)
+            logger.debug(f"已根据意图类别重新加载 Prompt: {intent.category}")
 
         # 2. 工具调用（如果需要）
         tool_result: Optional[ToolResult] = None

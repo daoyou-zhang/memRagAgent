@@ -1,12 +1,15 @@
 """工具管理 API
 
 提供 MCP 工具的 CRUD 操作
+- 预设工具：代码中定义（tool_registry）
+- 数据库工具：mcp_tools 表
 """
 from typing import List, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from ..services.tool_registry import get_tool_registry
+from ..services.tool_service import get_tool_service
 from ..models.mcp_tool import ToolDefinition, ToolCategory, ToolScope, ToolHandlerType
 
 
@@ -113,32 +116,96 @@ async def get_tool(tool_name: str):
 
 @router.post("/", response_model=dict)
 async def create_tool(request: ToolCreateRequest):
-    """创建工具（需要数据库）"""
-    # TODO: 实现数据库写入
-    return {
-        "success": False,
-        "message": "数据库工具创建暂未实现，请直接修改数据库或使用预设工具",
-    }
+    """创建工具（写入数据库）"""
+    service = get_tool_service()
+    
+    try:
+        data = {
+            "name": request.name,
+            "display_name": request.display_name,
+            "description": request.description,
+            "category": request.category,
+            "parameters": request.parameters,
+            "scope": request.scope,
+            "project_ids": request.project_ids,
+            "user_ids": request.user_ids,
+            "handler_type": request.handler_type.lower(),
+            "handler_config": request.handler_config,
+            "enabled": request.enabled,
+            "priority": request.priority,
+        }
+        tool = service.create(data)
+        if tool:
+            # 刷新注册表缓存
+            registry = get_tool_registry()
+            await registry.reload()
+            return {"success": True, "tool": tool}
+        return {"success": False, "message": "创建失败"}
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.put("/{tool_name}", response_model=dict)
 async def update_tool(tool_name: str, request: ToolUpdateRequest):
-    """更新工具（需要数据库）"""
-    # TODO: 实现数据库更新
-    return {
-        "success": False,
-        "message": "数据库工具更新暂未实现",
-    }
+    """更新工具"""
+    service = get_tool_service()
+    
+    # 构建更新数据
+    update_data = {}
+    if request.display_name is not None:
+        update_data["display_name"] = request.display_name
+    if request.description is not None:
+        update_data["description"] = request.description
+    if request.parameters is not None:
+        update_data["parameters"] = request.parameters
+    if request.enabled is not None:
+        update_data["enabled"] = request.enabled
+    if request.priority is not None:
+        update_data["priority"] = request.priority
+    
+    if not update_data:
+        return {"success": True, "message": "无更新内容"}
+    
+    try:
+        tool = service.update(tool_name, update_data)
+        if tool:
+            # 刷新注册表缓存
+            registry = get_tool_registry()
+            await registry.reload()
+            return {"success": True, "tool": tool}
+        raise HTTPException(status_code=404, detail=f"工具 '{tool_name}' 不存在")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.delete("/{tool_name}", response_model=dict)
 async def delete_tool(tool_name: str):
-    """删除工具（需要数据库）"""
-    # TODO: 实现数据库删除
-    return {
-        "success": False,
-        "message": "数据库工具删除暂未实现",
-    }
+    """删除工具"""
+    service = get_tool_service()
+    
+    if service.delete(tool_name):
+        # 刷新注册表缓存
+        registry = get_tool_registry()
+        await registry.reload()
+        return {"success": True, "message": f"工具 '{tool_name}' 已删除"}
+    
+    raise HTTPException(status_code=404, detail=f"工具 '{tool_name}' 不存在")
+
+
+@router.post("/{tool_name}/toggle")
+async def toggle_tool(tool_name: str, enabled: bool):
+    """启用/禁用工具"""
+    service = get_tool_service()
+    
+    tool = service.toggle_enabled(tool_name, enabled)
+    if tool:
+        registry = get_tool_registry()
+        await registry.reload()
+        return {"success": True, "enabled": enabled, "tool": tool}
+    
+    raise HTTPException(status_code=404, detail=f"工具 '{tool_name}' 不存在")
 
 
 @router.get("/categories/list")

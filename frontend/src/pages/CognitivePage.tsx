@@ -65,7 +65,7 @@ function CognitivePage() {
   return (
     <div style={{ padding: '1rem', maxWidth: 1000, margin: '0 auto' }}>
       <h2>🧠 道友认知测试台</h2>
-      <p style={{ color: '#666', marginBottom: '1rem' }}>
+      <p style={{ color: 'var(--text-secondary, #888)', marginBottom: '1rem' }}>
         测试 daoyou_agent 的认知 API（端口 8000）
       </p>
 
@@ -175,7 +175,7 @@ function CognitivePage() {
           <button
             type="button"
             onClick={() => setShowPrompts(!showPrompts)}
-            style={{ background: 'none', border: 'none', color: '#666', cursor: 'pointer', padding: 0 }}
+            style={{ background: 'none', border: 'none', color: 'var(--text-secondary, #888)', cursor: 'pointer', padding: 0 }}
           >
             {showPrompts ? '▼' : '▶'} 自定义 Prompt（可选）
           </button>
@@ -224,10 +224,10 @@ function CognitivePage() {
           style={{
             marginTop: '1rem',
             padding: '0.75rem',
-            background: '#fee',
-            border: '1px solid #f99',
+            background: 'var(--error-bg, #4a1f1f)',
+            border: '1px solid var(--error-border, #8b3030)',
             borderRadius: '4px',
-            color: '#c00',
+            color: 'var(--error-text, #ff6b6b)',
           }}
         >
           {error}
@@ -241,10 +241,11 @@ function CognitivePage() {
           <div
             style={{
               padding: '1rem',
-              background: '#f5f5f5',
+              background: 'var(--bg-secondary, #2a2a2a)',
               borderRadius: '8px',
               whiteSpace: 'pre-wrap',
               lineHeight: 1.6,
+              color: 'var(--text-primary, #e0e0e0)',
             }}
           >
             {result.content}
@@ -257,7 +258,7 @@ function CognitivePage() {
                 <td style={tdStyle}>意图类别</td>
                 <td style={tdStyle}>
                   <span style={{ 
-                    background: '#e3f2fd', 
+                    background: 'var(--accent-bg, #1e3a5f)', 
                     padding: '2px 8px', 
                     borderRadius: '4px',
                     fontWeight: 'bold'
@@ -278,9 +279,9 @@ function CognitivePage() {
                 <td style={tdStyle}>需要工具</td>
                 <td style={tdStyle}>
                   {result.intent?.needs_tool ? (
-                    <span style={{ color: '#f57c00' }}>是</span>
+                    <span style={{ color: 'var(--warning-text, #ffb74d)' }}>是</span>
                   ) : (
-                    <span style={{ color: '#999' }}>否</span>
+                    <span style={{ color: 'var(--text-muted, #666)' }}>否</span>
                   )}
                 </td>
               </tr>
@@ -296,7 +297,7 @@ function CognitivePage() {
                   <td style={tdStyle}>
                     {result.intent.entities.map((e, i) => (
                       <span key={i} style={{ 
-                        background: '#fff3e0', 
+                        background: 'var(--tag-bg, #3d2e1f)', 
                         padding: '2px 6px', 
                         borderRadius: '3px',
                         marginRight: '4px',
@@ -359,7 +360,7 @@ function CognitivePage() {
 
 const tdStyle: React.CSSProperties = {
   padding: '0.5rem',
-  border: '1px solid #ddd',
+  border: '1px solid var(--border-color, #404040)',
 }
 
 export default CognitivePage

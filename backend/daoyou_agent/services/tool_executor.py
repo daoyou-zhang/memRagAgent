@@ -180,16 +180,79 @@ class ToolExecutor:
         tool_call: ToolCall,
         timeout: float,
     ) -> Any:
-        """执行 MCP 协议调用（待实现）
+        """执行 MCP 协议调用
+        
+        MCP (Model Context Protocol) 使用 JSON-RPC 2.0 格式
         
         handler_config 格式:
         {
-            "server": "mcp://localhost:8080",
-            "tool_id": "xxx"
+            "server": "http://localhost:8080" 或 "mcp://localhost:8080",
+            "tool_id": "xxx",  // 可选，默认使用 tool_def.name
+            "headers": {}      // 可选，额外的请求头
         }
         """
-        # TODO: 实现 MCP 协议调用
-        raise NotImplementedError("MCP 协议调用尚未实现")
+        import uuid
+        
+        config = tool_def.handler_config
+        server_url = config.get("server", "")
+        tool_id = config.get("tool_id", tool_def.name)
+        headers = config.get("headers", {})
+        
+        if not server_url:
+            raise ValueError(f"工具 {tool_def.name} 的 MCP 服务器地址未配置")
+        
+        # 处理 mcp:// 协议前缀
+        if server_url.startswith("mcp://"):
+            server_url = server_url.replace("mcp://", "http://")
+        
+        # 确保 URL 有协议前缀
+        if not server_url.startswith(("http://", "https://")):
+            server_url = f"http://{server_url}"
+        
+        # 构建 JSON-RPC 2.0 请求
+        rpc_request = {
+            "jsonrpc": "2.0",
+            "method": "tools/call",
+            "params": {
+                "name": tool_id,
+                "arguments": tool_call.arguments,
+            },
+            "id": str(uuid.uuid4()),
+        }
+        
+        # 设置请求头
+        request_headers = {
+            "Content-Type": "application/json",
+            **headers,
+        }
+        
+        async with httpx.AsyncClient() as client:
+            try:
+                resp = await client.post(
+                    server_url,
+                    json=rpc_request,
+                    headers=request_headers,
+                    timeout=timeout,
+                )
+                resp.raise_for_status()
+                
+                result = resp.json()
+                
+                # 处理 JSON-RPC 响应
+                if "error" in result:
+                    error = result["error"]
+                    raise RuntimeError(f"MCP 调用失败: {error.get('message', error)}")
+                
+                # 返回结果
+                return result.get("result", result)
+                
+            except httpx.TimeoutException:
+                raise TimeoutError(f"MCP 调用超时: {server_url}")
+            except httpx.HTTPStatusError as e:
+                raise RuntimeError(f"MCP 服务器错误: {e.response.status_code} - {e.response.text}")
+            except Exception as e:
+                logger.error(f"MCP 调用异常: {e}")
+                raise
 
 
 # ============================================================

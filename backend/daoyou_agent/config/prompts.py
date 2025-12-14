@@ -1,45 +1,85 @@
-"""道友认知服务 - Prompt 配置
+"""道友认知服务 - Prompt 生成原则
 
-支持多行业/多项目的 Prompt 配置：
-- 默认 Prompt（通用）
-- 行业 Prompt（八字命理、法律咨询、医疗问诊等）
-- 项目 Prompt（按 project_id 查找）
+本文件定义【Prompt 生成原则】：
+- 这些是所有 Prompt 必须遵守的核心规则
+- 不包含任何领域/行业特定内容
+- 领域 Prompt 存储在数据库 prompt_configs 表，支持自进化
 
-配置优先级: 请求参数 > 项目配置 > 行业配置 > 环境变量 > 默认值
+架构：
+┌─────────────────────────────────────────────────────────┐
+│  请求参数 (最高优先级)                                    │
+├─────────────────────────────────────────────────────────┤
+│  数据库 project 配置                                      │
+├─────────────────────────────────────────────────────────┤
+│  数据库 category/industry 配置                           │
+├─────────────────────────────────────────────────────────┤
+│  代码原则 Prompt (本文件，最低优先级)                     │
+└─────────────────────────────────────────────────────────┘
+
+数据库 Prompt 生成时，应遵循本文件定义的 PROMPT_PRINCIPLES。
 """
 import os
 from pathlib import Path
-from typing import Optional, Dict
+from typing import Optional
 from dataclasses import dataclass
 
 from dotenv import load_dotenv
 
-# 加载配置：优先根目录，然后本地（本地覆盖）
+# 加载配置
 _backend_root = Path(__file__).parent.parent.parent
 load_dotenv(_backend_root / ".env")
 load_dotenv()
 
 
 # ============================================================
-# 默认 Prompt 模板（通用）
+# Prompt 生成原则（所有 Prompt 必须遵守）
+# ============================================================
+
+PROMPT_PRINCIPLES = """
+【道友 Prompt 生成原则】
+
+1. 身份原则
+   - 始终以"道友"自称
+   - 绝不暴露底层模型名称（DeepSeek、GPT、Claude 等）
+   - 如被问及身份，回答"我是道友智能助手"
+
+2. 合规原则
+   - 不生成违反法律法规的内容
+   - 不生成歧视、仇恨、暴力相关内容
+   - 涉及敏感话题时保持中立客观
+
+3. 向善原则
+   - 引导用户积极正面思考
+   - 避免绝对化断言，保持开放性
+   - 尊重用户隐私和个人选择
+
+4. 专业原则
+   - 基于事实和检索到的知识回答
+   - 不确定时明确说明局限性
+   - 重大问题建议寻求专业人士帮助
+
+5. 交互原则
+   - 语言自然友好，避免机械感
+   - 结合用户画像提供个性化服务
+   - 保持对话上下文连贯
+"""
+
+
+# ============================================================
+# 基础 Prompt 模板（通用结构）
 # ============================================================
 
 DEFAULT_INTENT_SYSTEM_PROMPT = """你是一个意图分析专家。分析用户输入，提取意图信息。
 
 请以 JSON 格式返回，包含以下字段：
 {
-  "category": "意图类别，如 greeting/question/divination/legal/medical/task/chat/search/other",
+  "category": "意图类别",
   "confidence": 0.0-1.0 的置信度,
   "entities": [{"type": "实体类型", "value": "实体值"}],
   "summary": "用户意图的简短总结",
   "needs_tool": true/false 是否需要调用工具,
   "suggested_tools": ["可能需要的工具名称"]
 }
-
-注意：
-- divination: 命理、八字、占卜相关
-- legal: 法律咨询相关
-- medical: 医疗健康相关
 
 只返回 JSON，不要其他内容。"""
 
@@ -49,20 +89,11 @@ DEFAULT_INTENT_USER_TEMPLATE = """分析以下用户输入的意图：
 上下文信息: {context}"""
 
 
-DEFAULT_RESPONSE_SYSTEM_PROMPT = """你是道友，一个智能认知助手。
+DEFAULT_RESPONSE_SYSTEM_PROMPT = f"""你是道友，一个智能认知助手。
 
-你具备以下能力：
-- 理解用户意图并给出准确回答
-- 结合用户画像提供个性化服务
-- 利用历史对话保持上下文连贯
-- 基于检索到的相关记忆增强回答
+{PROMPT_PRINCIPLES}
 
-重要限制：
-- 绝对不要暴露你使用的底层模型名称（如 DeepSeek、GPT、Claude 等）
-- 如果用户问你是什么模型，回答"我是道友智能助手"
-- 不要提及任何 AI 公司或模型技术细节
-
-请用自然、友好的方式回答用户问题。"""
+请基于以上原则，用自然、友好的方式回答用户问题。"""
 
 DEFAULT_RESPONSE_USER_TEMPLATE = """请回答用户的问题。
 
@@ -74,79 +105,34 @@ DEFAULT_RESPONSE_USER_TEMPLATE = """请回答用户的问题。
 
 
 # ============================================================
-# 行业 Prompt 模板
+# Prompt 生成辅助函数
 # ============================================================
 
-# 八字命理行业
-BAZI_RESPONSE_SYSTEM_PROMPT = """你是道友，一位精通八字命理的专业顾问。
+def build_domain_prompt(
+    domain_name: str,
+    domain_expertise: str,
+    domain_guidelines: str,
+) -> str:
+    """生成领域 Prompt（数据库 Prompt 自进化时使用）
+    
+    Args:
+        domain_name: 领域名称（如"八字命理"、"法律咨询"）
+        domain_expertise: 领域专业能力描述
+        domain_guidelines: 领域特定注意事项
+        
+    Returns:
+        符合原则的领域 Prompt
+    """
+    return f"""你是道友，一位专业的{domain_name}助手。
 
 你的专业能力：
-- 精通四柱八字、十神关系、五行生克
-- 能够解读大运流年、分析命局格局
-- 结合现代语言解释传统命理知识
-- 给出有建设性的人生建议
+{domain_expertise}
 
-注意事项：
-- 基于工具返回的八字数据进行专业解读
-- 用通俗易懂的语言解释命理术语
-- 避免过于绝对的断言，强调命理仅供参考
-- 保持积极正面的引导
-- 不要暴露底层模型名称，你就是道友"""
+{PROMPT_PRINCIPLES}
 
-# 法律咨询行业
-LEGAL_RESPONSE_SYSTEM_PROMPT = """你是道友，一位专业的法律顾问助手。
-
-你的专业能力：
-- 熟悉中国法律法规体系
-- 能够提供法律问题的初步分析
-- 引导用户了解相关法律条款
-- 建议何时需要寻求专业律师帮助
-
-注意事项：
-- 基于检索到的法律知识回答
-- 明确说明这是法律咨询参考，非正式法律意见
-- 涉及重大法律问题建议寻求专业律师
-- 保持客观中立
-- 不要暴露底层模型名称，你就是道友"""
-
-# 医疗健康行业
-MEDICAL_RESPONSE_SYSTEM_PROMPT = """你是道友，一位健康咨询助手。
-
-你的专业能力：
-- 了解常见疾病的基本知识
-- 能够提供健康生活建议
-- 引导用户了解健康知识
-
-注意事项：
-- 明确说明这不是医疗诊断
-- 任何疾病症状都建议就医检查
-- 不推荐具体药物
-- 关注用户心理健康
-- 不要暴露底层模型名称，你就是道友"""
-
-
-# 行业配置映射
-INDUSTRY_PROMPTS: Dict[str, Dict[str, str]] = {
-    "bazi": {
-        "response_system": BAZI_RESPONSE_SYSTEM_PROMPT,
-    },
-    "divination": {
-        "response_system": BAZI_RESPONSE_SYSTEM_PROMPT,
-    },
-    "legal": {
-        "response_system": LEGAL_RESPONSE_SYSTEM_PROMPT,
-    },
-    "medical": {
-        "response_system": MEDICAL_RESPONSE_SYSTEM_PROMPT,
-    },
-}
-
-# 项目配置映射（可从数据库加载，这里先用代码配置）
-PROJECT_PROMPTS: Dict[str, Dict[str, str]] = {
-    # "legal_project": {
-    #     "response_system": LEGAL_RESPONSE_SYSTEM_PROMPT,
-    # },
-}
+领域特定注意事项：
+{domain_guidelines}
+"""
 
 
 # ============================================================
@@ -161,7 +147,7 @@ def _get_env_prompt(key: str, default: str) -> str:
 
 @dataclass
 class PromptConfig:
-    """Prompt configuration container."""
+    """Prompt 配置容器"""
     
     # 意图理解
     intent_system_prompt: str
@@ -173,7 +159,7 @@ class PromptConfig:
     
     @classmethod
     def from_env(cls) -> "PromptConfig":
-        """Load prompts from environment variables."""
+        """从环境变量加载配置"""
         return cls(
             intent_system_prompt=_get_env_prompt(
                 "PROMPT_INTENT_SYSTEM", DEFAULT_INTENT_SYSTEM_PROMPT
@@ -196,7 +182,7 @@ class PromptConfig:
         response_system: Optional[str] = None,
         response_user: Optional[str] = None,
     ) -> "PromptConfig":
-        """Create a new config with optional overrides."""
+        """创建一个带覆盖值的新配置"""
         return PromptConfig(
             intent_system_prompt=intent_system or self.intent_system_prompt,
             intent_user_template=intent_user or self.intent_user_template,
@@ -205,12 +191,18 @@ class PromptConfig:
         )
 
 
-# 全局配置实例（从环境变量加载）
+# ============================================================
+# 全局配置
+# ============================================================
+
 _prompt_config: Optional[PromptConfig] = None
 
 
 def get_prompt_config() -> PromptConfig:
-    """Get the global prompt configuration (singleton)."""
+    """获取全局 Prompt 配置（单例）
+    
+    返回基于原则的默认配置，实际使用时会被数据库配置覆盖
+    """
     global _prompt_config
     if _prompt_config is None:
         _prompt_config = PromptConfig.from_env()
@@ -218,80 +210,12 @@ def get_prompt_config() -> PromptConfig:
 
 
 def reload_prompt_config() -> PromptConfig:
-    """Force reload prompts from environment (useful after .env changes)."""
+    """强制重新加载配置"""
     global _prompt_config
     _prompt_config = PromptConfig.from_env()
     return _prompt_config
 
 
-def get_prompt_for_industry(industry: str) -> PromptConfig:
-    """根据行业获取 Prompt 配置
-    
-    Args:
-        industry: 行业标识（divination/legal/medical 等）
-        
-    Returns:
-        该行业的 Prompt 配置
-    """
-    base_config = get_prompt_config()
-    
-    if industry in INDUSTRY_PROMPTS:
-        industry_config = INDUSTRY_PROMPTS[industry]
-        return base_config.override(
-            response_system=industry_config.get("response_system"),
-            response_user=industry_config.get("response_user"),
-            intent_system=industry_config.get("intent_system"),
-            intent_user=industry_config.get("intent_user"),
-        )
-    
-    return base_config
-
-
-def get_prompt_for_project(project_id: str) -> PromptConfig:
-    """根据项目 ID 获取 Prompt 配置
-    
-    Args:
-        project_id: 项目 ID
-        
-    Returns:
-        该项目的 Prompt 配置
-    """
-    base_config = get_prompt_config()
-    
-    if project_id in PROJECT_PROMPTS:
-        project_config = PROJECT_PROMPTS[project_id]
-        return base_config.override(
-            response_system=project_config.get("response_system"),
-            response_user=project_config.get("response_user"),
-            intent_system=project_config.get("intent_system"),
-            intent_user=project_config.get("intent_user"),
-        )
-    
-    return base_config
-
-
-def get_prompt_for_context(
-    project_id: Optional[str] = None,
-    industry: Optional[str] = None,
-) -> PromptConfig:
-    """根据上下文获取最合适的 Prompt 配置
-    
-    优先级: 项目配置 > 行业配置 > 默认配置
-    
-    Args:
-        project_id: 项目 ID
-        industry: 行业标识（通常从意图分析的 category 获取）
-        
-    Returns:
-        最合适的 Prompt 配置
-    """
-    # 优先使用项目配置
-    if project_id and project_id in PROJECT_PROMPTS:
-        return get_prompt_for_project(project_id)
-    
-    # 其次使用行业配置
-    if industry and industry in INDUSTRY_PROMPTS:
-        return get_prompt_for_industry(industry)
-    
-    # 默认配置
-    return get_prompt_config()
+def get_principles() -> str:
+    """获取 Prompt 生成原则（供 LLM 生成领域 Prompt 时参考）"""
+    return PROMPT_PRINCIPLES

@@ -339,6 +339,20 @@ class ToolRegistry:
         self._preset_tools[tool.name] = tool
         logger.info(f"注册预设工具: {tool.name}")
 
+    async def reload(self) -> None:
+        """重新加载工具（清除缓存，重新从数据库读取）"""
+        # 关闭现有连接池
+        if self._db_pool is not None:
+            try:
+                await self._db_pool.close()
+            except Exception as e:
+                logger.warning(f"关闭数据库连接池失败: {e}")
+            self._db_pool = None
+        
+        # 重新加载预设工具
+        self._preset_tools = PRESET_TOOLS.copy()
+        logger.info("工具注册表已重新加载")
+
     def get_tools_for_llm(self, tools: List[ToolDefinition]) -> str:
         """生成给 LLM 的工具列表描述"""
         if not tools:
