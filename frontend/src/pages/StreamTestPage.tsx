@@ -3,6 +3,9 @@ import { DAOYOU_BASE } from '../api/cognitive'
 
 function StreamTestPage() {
   const [input, setInput] = useState('你好，介绍一下你自己')
+  const [userId, setUserId] = useState('admin')
+  const [projectId, setProjectId] = useState('test_project')
+  const [agentId, setAgentId] = useState('gui_water')
   const [status, setStatus] = useState<'idle' | 'connecting' | 'connected' | 'error'>('idle')
   const [timeText, setTimeText] = useState('耗时: -')
   const [chunkText, setChunkText] = useState('片段: 0')
@@ -60,8 +63,9 @@ function StreamTestPage() {
         body: JSON.stringify({
           input: trimmed,
           stream: true,
-          user_id: 'admin',
-          project_id: '',
+          user_id: userId || undefined,
+          project_id: projectId || undefined,
+          agent_id: agentId || undefined,
         }),
       })
 
@@ -144,8 +148,9 @@ function StreamTestPage() {
         body: JSON.stringify({
           input: trimmed,
           stream: false,
-          user_id: 'test_user',
-          project_id: 'test_project',
+          user_id: userId || undefined,
+          project_id: projectId || undefined,
+          agent_id: agentId || undefined,
         }),
       })
 
@@ -242,6 +247,57 @@ function StreamTestPage() {
               resize: 'vertical',
             }}
           />
+        </div>
+
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+          <label style={{ fontSize: 13 }}>
+            User ID
+            <input
+              value={userId}
+              onChange={(e) => setUserId(e.target.value)}
+              style={{
+                marginLeft: 6,
+                padding: '4px 8px',
+                borderRadius: 6,
+                border: '1px solid #555',
+                background: '#111',
+                color: '#eee',
+                minWidth: 120,
+              }}
+            />
+          </label>
+          <label style={{ fontSize: 13 }}>
+            Project ID
+            <input
+              value={projectId}
+              onChange={(e) => setProjectId(e.target.value)}
+              style={{
+                marginLeft: 6,
+                padding: '4px 8px',
+                borderRadius: 6,
+                border: '1px solid #555',
+                background: '#111',
+                color: '#eee',
+                minWidth: 140,
+              }}
+            />
+          </label>
+          <label style={{ fontSize: 13 }}>
+            Agent ID
+            <input
+              value={agentId}
+              onChange={(e) => setAgentId(e.target.value)}
+              style={{
+                marginLeft: 6,
+                padding: '4px 8px',
+                borderRadius: 6,
+                border: '1px solid #555',
+                background: '#111',
+                color: '#eee',
+                minWidth: 140,
+              }}
+            />
+          </label>
         </div>
 
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>

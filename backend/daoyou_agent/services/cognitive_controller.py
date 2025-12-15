@@ -35,6 +35,7 @@ from ..models.cognitive import (
 )
 from ..config.prompts import get_prompt_config, PromptConfig
 from ..models.mcp_tool import ToolResult
+from ..models.prompt_config import PromptConfigCreate
 from ..services.prompt_service import get_prompt_service
 from .context_aggregator import get_context_aggregator
 from .ai_service_adapter import get_intent_client, get_response_client, get_ai_service, LLMClient, LLMConfig
@@ -80,29 +81,80 @@ class CognitiveController:
         """
         # 1. 基础：代码默认 prompt（原则性内容）
         config = self.default_prompt_config
-        
+        logger.debug("Prompt 选择: 使用代码内置默认配置作为基础")
+
+        # 1.5 如果指定了 agent_id，优先使用对应的 Prompt 配置
+        agent_id = getattr(request, "agent_id", None)
+        if agent_id:
+            prompt_service = get_prompt_service()
+            db_agent_config = prompt_service.get_by_agent(agent_id)
+            if db_agent_config:
+                config = config.override(
+                    intent_system=db_agent_config.get("intent_system_prompt"),
+                    response_system=db_agent_config.get("response_system_prompt"),
+                    response_user=db_agent_config.get("response_user_template"),
+                )
+                logger.info(
+                    "Prompt 选择: 命中 agent 配置",
+                    extra={
+                        "agent_id": agent_id,
+                        "config_id": db_agent_config.get("id"),
+                    },
+                )
+                # agent 级别已生效，后续仍允许请求级覆盖
+                if any([request.intent_system_prompt, request.intent_user_prompt, 
+                        request.response_system_prompt, request.response_user_prompt]):
+                    config = config.override(
+                        intent_system=request.intent_system_prompt,
+                        intent_user=request.intent_user_prompt,
+                        response_system=request.response_system_prompt,
+                        response_user=request.response_user_prompt,
+                    )
+                    logger.info("Prompt 选择: 请求级 prompt 覆盖了 agent 配置")
+                return config
+            else:
+                logger.warning(f"Prompt 选择: 未找到 agent 配置, agent_id={agent_id}")
+
         # 2. 叠加数据库 category 配置
         effective_category = category or getattr(request, 'industry', None)
         if effective_category:
-            db_category_config = get_prompt_service().get_by_category(effective_category)
+            prompt_service = get_prompt_service()
+            db_category_config = prompt_service.get_by_category(effective_category)
             if db_category_config:
                 config = config.override(
                     intent_system=db_category_config.get("intent_system_prompt"),
                     response_system=db_category_config.get("response_system_prompt"),
                     response_user=db_category_config.get("response_user_template"),
                 )
-                logger.debug(f"应用数据库 category 配置: {effective_category}")
+                logger.info(
+                    "Prompt 选择: 命中 category 配置",
+                    extra={
+                        "category": effective_category,
+                        "config_id": db_category_config.get("id"),
+                    },
+                )
+            else:
+                logger.debug(f"Prompt 选择: 未找到 category 配置, category={effective_category}")
         
         # 3. 叠加数据库 project 配置（优先级高于 category）
         if request.project_id:
-            db_project_config = get_prompt_service().get_by_project(request.project_id)
+            prompt_service = get_prompt_service()
+            db_project_config = prompt_service.get_by_project(request.project_id)
             if db_project_config:
                 config = config.override(
                     intent_system=db_project_config.get("intent_system_prompt"),
                     response_system=db_project_config.get("response_system_prompt"),
                     response_user=db_project_config.get("response_user_template"),
                 )
-                logger.debug(f"应用数据库 project 配置: {request.project_id}")
+                logger.info(
+                    "Prompt 选择: 命中 project 配置",
+                    extra={
+                        "project_id": request.project_id,
+                        "config_id": db_project_config.get("id"),
+                    },
+                )
+            else:
+                logger.debug(f"Prompt 选择: 未找到 project 配置, project_id={request.project_id}")
         
         # 4. 叠加请求参数（最高优先级）
         if any([request.intent_system_prompt, request.intent_user_prompt, 
@@ -113,7 +165,7 @@ class CognitiveController:
                 response_system=request.response_system_prompt,
                 response_user=request.response_user_prompt,
             )
-            logger.debug("应用请求参数 prompt 覆盖")
+            logger.info("Prompt 选择: 应用请求级 prompt 覆盖(无 agent_id)")
         
         return config
 
@@ -351,19 +403,83 @@ class CognitiveController:
         # 获取本次请求的 prompt 配置
         prompt_config = self._get_prompt_config(request)
 
+        # 0. 轻量获取 memRag 上下文（仅给意图 / 工具决策使用）
+        light_context: Dict[str, Any] = {}
+        try:
+            light_context = await self.context_aggregator.get_cognitive_context(
+                query=request.input,
+                user_id=request.user_id,
+                session_id=session_id,
+                project_id=effective_project_id,
+                context_config={
+                    "memory_depth": min(request.memory_depth or 5, 5),
+                    "knowledge_limit": 0,
+                    "enable_profile": True,
+                    "enable_knowledge": False,
+                    "enable_graph": False,
+                },
+                user_api_key=user_api_key,
+            )
+        except Exception as exc:
+            logger.warning(f"轻量上下文获取失败，继续仅基于当前输入进行意图分析: {exc}")
+            light_context = {}
+
+        # 合并用户传入的 context 与轻量 memRag 上下文
+        base_intent_context: Dict[str, Any] = dict(request.context or {})
+        if light_context.get("user_profile") is not None:
+            base_intent_context["user_profile"] = light_context.get("user_profile")
+        if light_context.get("working_memory"):
+            base_intent_context["working_memory"] = light_context.get("working_memory")
+        logger.debug(f"合并后的上下文: {base_intent_context}")
         # 1. 意图理解（使用 LLM）
         intent = await self._understand_intent(
             user_input=request.input,
-            context=request.context,
+            context=base_intent_context,
             prompt_config=prompt_config,
         )
         logger.info(f"意图分析完成: category={intent.category}, confidence={intent.confidence}, needs_tool={intent.needs_tool}")
 
-        # 1.5 根据意图类别重新获取 Prompt（使用数据库优先级）
-        if not request.response_system_prompt and intent.category:
-            # 重新获取 prompt，带上意图分析得到的 category
-            prompt_config = self._get_prompt_config(request, category=intent.category)
-            logger.debug(f"已根据意图类别重新加载 Prompt: {intent.category}")
+        # 1.5 根据 agent_id / 意图类别重新获取 Prompt（使用数据库优先级 + 类别约束）
+        if not request.response_system_prompt:
+            agent_id = getattr(request, "agent_id", None)
+
+            # 如果指定了 agent_id，则在 _get_prompt_config 中已优先使用 agent 级配置，这里无需按类别再覆盖
+            if not agent_id and intent.category:
+                prompt_service = get_prompt_service()
+
+                # 仅在没有 agent_id 时，对 category 做规范化和自动领域创建
+                known_categories = prompt_service.list_categories()
+                raw_category = intent.category
+                normalized_category = raw_category if raw_category in known_categories else None
+
+                # 如无匹配且类别不是通用占位符，则自动创建一个新的领域配置（占位，后续可在管理端编辑）
+                if not normalized_category and raw_category and raw_category != "other":
+                    try:
+                        created = prompt_service.create(
+                            PromptConfigCreate(
+                                category=raw_category,
+                                project_id=request.project_id,
+                                agent_id=None,
+                                name=raw_category,
+                                description=f"Auto-created config for category '{raw_category}'",
+                                intent_system_prompt=None,
+                                intent_user_template=None,
+                                response_system_prompt=None,
+                                response_user_template=None,
+                                enabled=True,
+                                priority=0,
+                            )
+                        )
+                        if created:
+                            normalized_category = raw_category
+                            logger.info(f"已为新领域自动创建 Prompt 配置: category={raw_category}")
+                    except Exception as exc:
+                        logger.warning(f"自动创建 Prompt 配置失败: category={raw_category}, error={exc}")
+
+                effective_category_for_prompt = normalized_category
+                if effective_category_for_prompt:
+                    prompt_config = self._get_prompt_config(request, category=effective_category_for_prompt)
+                    logger.debug(f"已根据意图类别重新加载 Prompt: {effective_category_for_prompt}")
 
         # 2. 工具调用（如果需要）
         tool_result: Optional[ToolResult] = None
@@ -372,8 +488,9 @@ class CognitiveController:
                 user_input=request.input,
                 intent=intent,
                 user_id=request.user_id,
-                project_id=request.project_id,
+                project_id=effective_project_id,
                 session_id=session_id,
+                context=base_intent_context,
             )
             if tool_result:
                 logger.info(f"工具调用完成: {tool_result.tool_name}, success={tool_result.success}")
@@ -404,6 +521,17 @@ class CognitiveController:
             {"role": "system", "content": prompt_config.response_system_prompt},
             {"role": "user", "content": user_prompt},
         ]
+
+        # 记录最终用于回复生成的 Prompt（截断，便于排查是否命中自定义 prompt）
+        system_preview = (prompt_config.response_system_prompt or "")[:400]
+        user_preview = user_prompt[:400]
+        logger.debug(
+            "回复生成 Prompt 预览(非流式)",
+            extra={
+                "system_prompt_preview": system_preview,
+                "user_prompt_preview": user_preview,
+            },
+        )
 
         # 获取回复客户端（支持用户自定义模型）
         response_client = self._get_response_client(request)
@@ -436,6 +564,7 @@ class CognitiveController:
                     intent=intent,
                     tool_result=tool_result,
                     processing_time=processing_time,
+                    project_id=effective_project_id,
                 )
             except Exception as exc:
                 logger.error(f"交互学习失败: {exc}")
@@ -494,7 +623,7 @@ class CognitiveController:
                     user_input=request.input,
                     intent=intent,
                     user_id=request.user_id,
-                    project_id=request.project_id,
+                    project_id=effective_project_id,
                 )
                 if tool_result:
                     tool_data = {
@@ -532,7 +661,12 @@ class CognitiveController:
             ]
             
             # DEBUG: 打印发送给 LLM 的 prompt
-            logger.debug(f"=== 发送给 LLM 的 User Prompt ===\n{user_prompt[:2000]}{'...(截断)' if len(user_prompt) > 2000 else ''}")
+            logger.debug(
+                f"=== 发送给 LLM 的 System Prompt ===\n{prompt_config.response_system_prompt[:2000] if prompt_config.response_system_prompt else ''}"
+            )
+            logger.debug(
+                f"=== 发送给 LLM 的 User Prompt ===\n{user_prompt[:2000]}{'...(截断)' if len(user_prompt) > 2000 else ''}"
+            )
             
             # 5. 流式生成回复（支持用户自定义模型）
             response_client = self._get_response_client(request)
@@ -554,6 +688,7 @@ class CognitiveController:
                         intent=intent,
                         tool_result=tool_result,
                         processing_time=processing_time,
+                        project_id=effective_project_id,
                     )
                 except Exception as exc:
                     logger.error(f"交互学习失败: {exc}")
@@ -580,6 +715,7 @@ class CognitiveController:
         intent: Optional[Intent] = None,
         tool_result: Optional[ToolResult] = None,
         processing_time: float = 0,
+        project_id: Optional[str] = None,
     ) -> None:
         """统一对话记录，由 memory 服务处理所有存储逻辑。
 
@@ -593,7 +729,7 @@ class CognitiveController:
             result = await memory_client.record_conversation(
                 user_id=request.user_id,
                 session_id=session_id,
-                project_id=request.project_id,
+                project_id=project_id or request.project_id,
                 raw_query=request.input,
                 intent={
                     "category": intent.category,

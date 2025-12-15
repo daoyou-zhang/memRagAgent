@@ -1,168 +1,186 @@
 """Prompt 配置服务
 
-提供 Prompt 配置的 CRUD 操作，使用 PostgreSQL 数据库
-表结构: prompt_configs（在 knowledge 数据库）
+负责从 PostgreSQL 的 prompt_configs 表读写 Prompt 配置。
+
+此模块被认知控制器和 Prompt 管理 API 复用，需保持接口稳定：
+- list_all(enabled_only=False)
+- get_by_id(id)
+- get_by_category(category)
+- get_by_project(project_id)
+- get_by_agent(agent_id)
+- create(PromptConfigCreate)
+- update(id, PromptConfigUpdate)
+- delete(id)
+
+返回值统一为 dict（直接从 psycopg2 cursor.fetchone()/fetchall() 转换）。
 """
+from __future__ import annotations
+
 import os
-from datetime import datetime
-from typing import Optional, List, Dict, Any
-from loguru import logger
+from typing import Any, Dict, List, Optional
 
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
-from ..models.prompt_config import PromptConfigCreate, PromptConfigUpdate, PromptConfigResponse
+from ..models.prompt_config import PromptConfigCreate, PromptConfigUpdate
 
 
 def _get_db_url() -> str:
-    """获取数据库连接 URL"""
-    return os.getenv("KNOWLEDGE_DB_URL") or os.getenv("DATABASE_URL") or \
-        f"postgresql://{os.getenv('POSTGRES_USER', 'postgres')}:{os.getenv('POSTGRES_PASSWORD', '')}@" \
-        f"{os.getenv('POSTGRES_HOST', 'localhost')}:{os.getenv('POSTGRES_PORT', '5432')}/{os.getenv('POSTGRES_DB', 'memrag')}"
+    """构造数据库连接 URL。
+
+    优先读取专用的 DAOYOU_DB_* 环境变量；
+    如未配置，则回退到通用的 POSTGRES_* 配置；
+    最后再给出本地默认值，避免硬编码 localhost 导致困惑。
+    """
+
+    host = (
+        os.getenv("DAOYOU_DB_HOST")
+        or os.getenv("POSTGRES_HOST")
+        or "localhost"
+    )
+    port = (
+        os.getenv("DAOYOU_DB_PORT")
+        or os.getenv("POSTGRES_PORT")
+        or "5432"
+    )
+    user = (
+        os.getenv("DAOYOU_DB_USER")
+        or os.getenv("POSTGRES_USER")
+        or "postgres"
+    )
+    password = (
+        os.getenv("DAOYOU_DB_PASSWORD")
+        or os.getenv("POSTGRES_PASSWORD")
+        or "postgres"
+    )
+    database = (
+        os.getenv("DAOYOU_DB_NAME")
+        or os.getenv("POSTGRES_DB")
+        or "daoyou"
+    )
+
+    return f"postgresql://{user}:{password}@{host}:{port}/{database}"
 
 
 class PromptService:
-    """Prompt 配置管理服务（数据库版）"""
-    
+    """Prompt 配置的数据库访问服务。"""
+
+    def __init__(self, db_url: Optional[str] = None) -> None:
+        self.db_url = db_url or _get_db_url()
+
+    # -------------- 内部工具 --------------
     def _get_conn(self):
-        """获取数据库连接"""
-        return psycopg2.connect(_get_db_url())
-    
+        return psycopg2.connect(self.db_url, cursor_factory=RealDictCursor)
+
+    # -------------- 查询接口 --------------
     def list_all(self, enabled_only: bool = False) -> List[Dict[str, Any]]:
-        """获取所有配置"""
-        try:
-            with self._get_conn() as conn:
-                with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                    sql = "SELECT * FROM prompt_configs"
-                    if enabled_only:
-                        sql += " WHERE enabled = true"
-                    sql += " ORDER BY priority DESC, created_at DESC"
-                    cur.execute(sql)
-                    return [dict(row) for row in cur.fetchall()]
-        except Exception as e:
-            logger.error(f"查询 Prompt 配置失败: {e}")
-            return []
-    
+        sql = "SELECT * FROM prompt_configs"
+        params: List[Any] = []
+        if enabled_only:
+            sql += " WHERE enabled = true"
+        sql += " ORDER BY priority DESC, id ASC"
+
+        with self._get_conn() as conn, conn.cursor() as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+        return [dict(row) for row in rows]
+
     def get_by_id(self, config_id: int) -> Optional[Dict[str, Any]]:
-        """根据 ID 获取配置"""
-        try:
-            with self._get_conn() as conn:
-                with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                    cur.execute("SELECT * FROM prompt_configs WHERE id = %s", (config_id,))
-                    row = cur.fetchone()
-                    return dict(row) if row else None
-        except Exception as e:
-            logger.error(f"查询 Prompt 配置失败: {e}")
-            return None
-    
+        sql = "SELECT * FROM prompt_configs WHERE id = %s"
+        with self._get_conn() as conn, conn.cursor() as cur:
+            cur.execute(sql, (config_id,))
+            row = cur.fetchone()
+        return dict(row) if row else None
+
     def get_by_category(self, category: str) -> Optional[Dict[str, Any]]:
-        """根据行业获取配置"""
-        try:
-            with self._get_conn() as conn:
-                with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                    cur.execute(
-                        "SELECT * FROM prompt_configs WHERE category = %s AND enabled = true ORDER BY priority DESC LIMIT 1",
-                        (category,)
-                    )
-                    row = cur.fetchone()
-                    return dict(row) if row else None
-        except Exception as e:
-            logger.error(f"查询行业 Prompt 失败: {e}")
-            return None
-    
+        sql = "SELECT * FROM prompt_configs WHERE category = %s AND enabled = true ORDER BY priority DESC, id ASC LIMIT 1"
+        with self._get_conn() as conn, conn.cursor() as cur:
+            cur.execute(sql, (category,))
+            row = cur.fetchone()
+        return dict(row) if row else None
+
     def get_by_project(self, project_id: str) -> Optional[Dict[str, Any]]:
-        """根据项目获取配置"""
-        try:
-            with self._get_conn() as conn:
-                with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                    cur.execute(
-                        "SELECT * FROM prompt_configs WHERE project_id = %s AND enabled = true ORDER BY priority DESC LIMIT 1",
-                        (project_id,)
-                    )
-                    row = cur.fetchone()
-                    return dict(row) if row else None
-        except Exception as e:
-            logger.error(f"查询项目 Prompt 失败: {e}")
-            return None
-    
+        sql = "SELECT * FROM prompt_configs WHERE project_id = %s AND enabled = true ORDER BY priority DESC, id ASC LIMIT 1"
+        with self._get_conn() as conn, conn.cursor() as cur:
+            cur.execute(sql, (project_id,))
+            row = cur.fetchone()
+        return dict(row) if row else None
+
+    def get_by_agent(self, agent_id: str) -> Optional[Dict[str, Any]]:
+        """根据 agent_id 获取 Prompt 配置。
+
+        用于为特定人格/智能体绑定专属 Prompt。
+        """
+
+        sql = "SELECT * FROM prompt_configs WHERE agent_id = %s AND enabled = true ORDER BY priority DESC, id ASC LIMIT 1"
+        with self._get_conn() as conn, conn.cursor() as cur:
+            cur.execute(sql, (agent_id,))
+            row = cur.fetchone()
+        return dict(row) if row else None
+
+    def list_categories(self) -> List[str]:
+        """列出所有已存在的 category（去重）。"""
+
+        sql = "SELECT DISTINCT category FROM prompt_configs WHERE category IS NOT NULL AND enabled = true"
+        with self._get_conn() as conn, conn.cursor() as cur:
+            cur.execute(sql)
+            rows = cur.fetchall()
+        return [row["category"] for row in rows if row.get("category")]
+
+    # -------------- 写入接口 --------------
     def create(self, data: PromptConfigCreate) -> Optional[Dict[str, Any]]:
-        """创建配置"""
-        try:
-            with self._get_conn() as conn:
-                with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                    cur.execute("""
-                        INSERT INTO prompt_configs 
-                        (category, project_id, name, description, 
-                         intent_system_prompt, intent_user_template,
-                         response_system_prompt, response_user_template,
-                         enabled, priority)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                        RETURNING *
-                    """, (
-                        data.category, data.project_id, data.name, data.description,
-                        data.intent_system_prompt, data.intent_user_template,
-                        data.response_system_prompt, data.response_user_template,
-                        data.enabled, data.priority
-                    ))
-                    row = cur.fetchone()
-                    conn.commit()
-                    logger.info(f"创建 Prompt 配置: {data.name}")
-                    return dict(row) if row else None
-        except Exception as e:
-            logger.error(f"创建 Prompt 配置失败: {e}")
-            raise
-    
+        sql = """
+        INSERT INTO prompt_configs (
+            category, project_id, agent_id,
+            name, description,
+            intent_system_prompt, intent_user_template,
+            response_system_prompt, response_user_template,
+            enabled, priority
+        ) VALUES (
+            %(category)s, %(project_id)s, %(agent_id)s,
+            %(name)s, %(description)s,
+            %(intent_system_prompt)s, %(intent_user_template)s,
+            %(response_system_prompt)s, %(response_user_template)s,
+            %(enabled)s, %(priority)s
+        ) RETURNING *
+        """
+        payload = data.dict()
+        with self._get_conn() as conn, conn.cursor() as cur:
+            cur.execute(sql, payload)
+            row = cur.fetchone()
+        return dict(row) if row else None
+
     def update(self, config_id: int, data: PromptConfigUpdate) -> Optional[Dict[str, Any]]:
-        """更新配置"""
-        try:
-            # 构建动态 UPDATE 语句
-            update_fields = []
-            values = []
-            for field, value in data.model_dump(exclude_unset=True).items():
-                if value is not None:
-                    update_fields.append(f"{field} = %s")
-                    values.append(value)
-            
-            if not update_fields:
-                return self.get_by_id(config_id)
-            
-            values.append(config_id)
-            sql = f"UPDATE prompt_configs SET {', '.join(update_fields)}, updated_at = NOW() WHERE id = %s RETURNING *"
-            
-            with self._get_conn() as conn:
-                with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                    cur.execute(sql, values)
-                    row = cur.fetchone()
-                    conn.commit()
-                    logger.info(f"更新 Prompt 配置: {config_id}")
-                    return dict(row) if row else None
-        except Exception as e:
-            logger.error(f"更新 Prompt 配置失败: {e}")
-            raise
-    
+        update_fields = {k: v for k, v in data.dict().items() if v is not None}
+        if not update_fields:
+            return self.get_by_id(config_id)
+
+        set_clauses = []
+        params: List[Any] = []
+        for idx, (key, value) in enumerate(update_fields.items(), start=1):
+            set_clauses.append(f"{key} = %s")
+            params.append(value)
+        params.append(config_id)
+
+        sql = f"UPDATE prompt_configs SET {', '.join(set_clauses)} WHERE id = %s RETURNING *"
+
+        with self._get_conn() as conn, conn.cursor() as cur:
+            cur.execute(sql, params)
+            row = cur.fetchone()
+        return dict(row) if row else None
+
     def delete(self, config_id: int) -> bool:
-        """删除配置"""
-        try:
-            with self._get_conn() as conn:
-                with conn.cursor() as cur:
-                    cur.execute("DELETE FROM prompt_configs WHERE id = %s", (config_id,))
-                    deleted = cur.rowcount > 0
-                    conn.commit()
-                    if deleted:
-                        logger.info(f"删除 Prompt 配置: {config_id}")
-                    return deleted
-        except Exception as e:
-            logger.error(f"删除 Prompt 配置失败: {e}")
-            return False
+        sql = "DELETE FROM prompt_configs WHERE id = %s"
+        with self._get_conn() as conn, conn.cursor() as cur:
+            cur.execute(sql, (config_id,))
+            return cur.rowcount > 0
 
 
-# 全局单例
-_service: Optional[PromptService] = None
+_prompt_service_instance: Optional[PromptService] = None
 
 
 def get_prompt_service() -> PromptService:
-    """获取 Prompt 服务单例"""
-    global _service
-    if _service is None:
-        _service = PromptService()
-    return _service
+    global _prompt_service_instance
+    if _prompt_service_instance is None:
+        _prompt_service_instance = PromptService()
+    return _prompt_service_instance

@@ -8,9 +8,10 @@
 CREATE TABLE IF NOT EXISTS prompt_configs (
     id SERIAL PRIMARY KEY,
     
-    -- 主键：category 或 project_id（至少有一个）
+    -- 主键：category / project_id / agent_id（三者至少有一个）
     category VARCHAR(32),              -- 意图分类：divination/legal/medical/testing 等
-    project_id VARCHAR(64),            -- 项目 ID（优先级高于 category）
+    project_id VARCHAR(64),            -- 项目 ID（按产品或场景划分）
+    agent_id VARCHAR(64),              -- 智能体 ID（同一 project 下的具体 Agent/persona）
     
     -- 配置名称
     name VARCHAR(128) NOT NULL,        -- 配置名称（如"八字命理"）
@@ -30,20 +31,25 @@ CREATE TABLE IF NOT EXISTS prompt_configs (
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW(),
     
-    -- 约束：category 和 project_id 至少有一个
-    CONSTRAINT chk_prompt_key CHECK (category IS NOT NULL OR project_id IS NOT NULL)
+    -- 约束：category / project_id / agent_id 至少有一个
+    CONSTRAINT chk_prompt_key CHECK (
+        category IS NOT NULL OR project_id IS NOT NULL OR agent_id IS NOT NULL
+    )
 );
 
 -- 索引
 CREATE INDEX IF NOT EXISTS idx_prompt_configs_category ON prompt_configs(category);
 CREATE INDEX IF NOT EXISTS idx_prompt_configs_project ON prompt_configs(project_id);
+CREATE INDEX IF NOT EXISTS idx_prompt_configs_agent ON prompt_configs(agent_id);
 CREATE INDEX IF NOT EXISTS idx_prompt_configs_enabled ON prompt_configs(enabled);
 
 -- 唯一约束：同一 category 或 project_id 只能有一个启用的配置
 CREATE UNIQUE INDEX IF NOT EXISTS idx_prompt_configs_category_unique 
-    ON prompt_configs(category) WHERE project_id IS NULL AND enabled = true;
+    ON prompt_configs(category) WHERE project_id IS NULL AND agent_id IS NULL AND enabled = true;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_prompt_configs_project_unique 
     ON prompt_configs(project_id) WHERE project_id IS NOT NULL AND enabled = true;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_prompt_configs_agent_unique 
+    ON prompt_configs(agent_id) WHERE agent_id IS NOT NULL AND enabled = true;
 
 -- 更新时间触发器
 CREATE OR REPLACE FUNCTION update_prompt_configs_updated_at()

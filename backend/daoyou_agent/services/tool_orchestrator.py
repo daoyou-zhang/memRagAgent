@@ -36,7 +36,8 @@ from .ai_service_adapter import get_intent_client
 
 TOOL_DECISION_SYSTEM_PROMPT = """你是一个工具调用决策专家。
 
-根据用户的问题和可用的工具列表，判断是否需要调用工具，如果需要则选择最合适的工具并填充参数。
+根据当前【用户问题】以及【上下文摘要】（其中包含最近对话和用户画像信息），
+判断是否需要调用工具；如果需要，则选择最合适的工具并填充参数。
 
 输出格式（必须是合法 JSON）：
 ```json
@@ -49,14 +50,18 @@ TOOL_DECISION_SYSTEM_PROMPT = """你是一个工具调用决策专家。
 ```
 
 注意：
-1. 只有当用户明确需要工具功能时才调用
-2. 参数必须从用户输入中提取，不要编造
-3. 如果信息不完整，在 reasoning 中说明缺少什么
+1. 只有当用户的需求需要工具功能时才调用
+2. 参数可以从【当前用户问题】以及【上下文摘要】中提取，不要凭空编造
+3. 如果必需的信息在当前问题和上下文中都不存在，在 reasoning 中说明缺少什么
 4. 日期时间要转换为正确格式
 5. 性别参数：男/男生/男性/先生 → "male"，女/女生/女性/女士 → "female"
-6. 时间格式：如"4点30"或"4:30"或"4.30" → "04"（取小时）"""
+6. 时间格式：如"4点30"或"4:30"或"4.30" → "04"（取小时）
+7. 如果上下文中已经包含了出生日期、时间、性别、出生地点等关键信息，则视为信息完整，可以调用对应工具（如八字排盘）"""
 
 TOOL_DECISION_USER_PROMPT = """用户问题：{user_input}
+
+上下文摘要（最近对话/画像，可选）：
+{context_summary}
 
 意图分析：
 - 类别：{intent_category}
@@ -65,7 +70,7 @@ TOOL_DECISION_USER_PROMPT = """用户问题：{user_input}
 可用工具：
 {tools_description}
 
-请决定是否需要调用工具，输出 JSON："""
+请根据用户问题和上下文，决定是否需要调用工具，输出 JSON："""
 
 
 class ToolOrchestrator:
@@ -88,6 +93,7 @@ class ToolOrchestrator:
         user_id: Optional[str] = None,
         project_id: Optional[str] = None,
         session_id: Optional[str] = None,
+        context: Optional[Dict[str, Any]] = None,
     ) -> Optional[ToolResult]:
         """处理工具调用
         
@@ -120,7 +126,7 @@ class ToolOrchestrator:
         logger.info(f"找到 {len(tools)} 个可用工具: {[t.name for t in tools]}")
         
         # 3. LLM 决策
-        decision = await self._make_tool_decision(user_input, intent, tools)
+        decision = await self._make_tool_decision(user_input, intent, tools, context=context)
         
         if not decision.should_call:
             logger.info(f"LLM 决定不调用工具: {decision.reasoning}")
@@ -157,6 +163,7 @@ class ToolOrchestrator:
         user_input: str,
         intent: Intent,
         tools: List[ToolDefinition],
+        context: Optional[Dict[str, Any]] = None,
     ) -> ToolCallDecision:
         """让 LLM 决定是否调用工具
         
@@ -182,9 +189,30 @@ class ToolOrchestrator:
                     entities_list.append(f"- {e}")
             entities_desc = "\n".join(entities_list)
         
+        # 构建上下文摘要（只取最近几条对话和简单画像）
+        context_summary = "无"
+        if context:
+            parts = []
+            profile = context.get("user_profile")
+            if profile:
+                parts.append("[画像] 已有用户画像信息")
+
+            wm = context.get("working_memory") or []
+            if wm:
+                recent = []
+                for m in wm[-3:]:  # 只看最近 3 条
+                    role = m.get("role", "?")
+                    content = m.get("content", "")[:80]
+                    recent.append(f"- {role}: {content}")
+                parts.append("[最近对话]\n" + "\n".join(recent))
+
+            if parts:
+                context_summary = "\n".join(parts)
+
         # 构建 prompt
         user_prompt = TOOL_DECISION_USER_PROMPT.format(
             user_input=user_input,
+            context_summary=context_summary,
             intent_category=intent.category,
             entities=entities_desc,
             tools_description=tools_desc,

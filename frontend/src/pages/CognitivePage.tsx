@@ -11,11 +11,11 @@ function CognitivePage() {
   const [userId, setUserId] = useState('')
   const [sessionId, setSessionId] = useState('')
   const [projectId, setProjectId] = useState('')
+  const [agentId, setAgentId] = useState('gui_water')
   const [enableMemory, setEnableMemory] = useState(true)
   const [memoryDepth, setMemoryDepth] = useState(5)
   const [ragLevel, setRagLevel] = useState(3)
   const [enableLearning, setEnableLearning] = useState(true)
-  const [qualityLevel, setQualityLevel] = useState<'fast' | 'balanced' | 'high'>('balanced')
 
   // 自定义 Prompt（可选）
   const [showPrompts, setShowPrompts] = useState(false)
@@ -43,11 +43,11 @@ function CognitivePage() {
       user_id: userId || undefined,
       session_id: sessionId || undefined,
       project_id: projectId || undefined,
+      agent_id: agentId || undefined,
       enable_memory: enableMemory,
       memory_depth: memoryDepth,
       rag_level: ragLevel,
       enable_learning: enableLearning,
-      quality_level: qualityLevel,
       intent_system_prompt: intentSystemPrompt || undefined,
       response_system_prompt: responseSystemPrompt || undefined,
     }
@@ -110,6 +110,14 @@ function CognitivePage() {
               style={{ marginLeft: '0.5rem', width: '120px' }}
             />
           </label>
+          <label>
+            Agent ID:
+            <input
+              value={agentId}
+              onChange={(e) => setAgentId(e.target.value)}
+              style={{ marginLeft: '0.5rem', width: '140px' }}
+            />
+          </label>
         </div>
 
         {/* 开关选项 */}
@@ -158,15 +166,9 @@ function CognitivePage() {
           </label>
           <label>
             质量级别:
-            <select
-              value={qualityLevel}
-              onChange={(e) => setQualityLevel(e.target.value as 'fast' | 'balanced' | 'high')}
-              style={{ marginLeft: '0.5rem' }}
-            >
-              <option value="fast">快速</option>
-              <option value="balanced">平衡</option>
-              <option value="high">高质量</option>
-            </select>
+            <span style={{ marginLeft: '0.5rem', fontSize: '0.85rem', color: 'var(--text-secondary, #888)' }}>
+              暂使用默认模型配置
+            </span>
           </label>
         </div>
 
