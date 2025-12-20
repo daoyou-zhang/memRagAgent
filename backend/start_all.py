@@ -16,21 +16,25 @@ def print_header():
     print("=" * 50)
 
 
-def start_service(name: str, cwd: str, port: int):
-    """启动服务进程"""
+def start_service(name: str, module: str, port: int):
+    """启动服务进程
+
+    为了支持包内相对导入，统一使用 `python -m <module>` 从 backend 根目录启动，
+    如 memory.app / knowledge.app。
+    """
     print(f"\n[启动] {name} 服务 (端口 {port})...")
-    
+
     if IS_WINDOWS:
-        # Windows: 新开 cmd 窗口
-        cmd = f'start "{name}" cmd /k "cd /d {cwd} && python app.py"'
+        # Windows: 新开 cmd 窗口，在 backend 根目录执行 python -m <module>
+        cmd = f'start "{name}" cmd /k "cd /d {SCRIPT_DIR} && python -m {module}"'
         subprocess.Popen(cmd, shell=True)
     else:
         # Linux/macOS: 后台运行
         log_file = os.path.join(SCRIPT_DIR, "logs", f"{name.lower()}.log")
         os.makedirs(os.path.dirname(log_file), exist_ok=True)
         subprocess.Popen(
-            ["python", "app.py"],
-            cwd=cwd,
+            ["python", "-m", module],
+            cwd=SCRIPT_DIR,
             stdout=open(log_file, "w"),
             stderr=subprocess.STDOUT,
             start_new_session=True,
@@ -42,10 +46,10 @@ def main():
     print_header()
     
     # 启动 Memory 服务
-    start_service("Memory", os.path.join(SCRIPT_DIR, "memory"), 5000)
+    start_service("Memory", "memory.app", 5000)
     
     # 启动 Knowledge 服务
-    start_service("Knowledge", os.path.join(SCRIPT_DIR, "knowledge"), 5001)
+    start_service("Knowledge", "knowledge.app", 5001)
     
     # 等待依赖服务启动
     print("\n等待依赖服务启动 (3秒)...")

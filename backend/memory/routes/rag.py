@@ -15,10 +15,10 @@ from sqlalchemy.orm import Session
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from shared.auth import flask_auth_required, Scopes
-from repository.db_session import SessionLocal
-from models.memory import Memory
-from embeddings_client import generate_embedding
-from services.vector_service import get_memory_vector_service
+from ..repository.db_session import SessionLocal
+from ..models.memory import Memory
+from ..embeddings_client import generate_embedding
+from ..services.vector_service import get_memory_vector_service
 
 # ChromaDB 开关
 USE_CHROMADB = os.getenv("USE_CHROMADB", "true").lower() == "true"
@@ -150,7 +150,7 @@ def rag_query():
 
         # Fallback: JSONB 向量检索
         if not top_candidates:
-            from models.memory import MemoryEmbedding
+            from ..models.memory import MemoryEmbedding
             
             def _cosine(a, b):
                 if not a or not b or len(a) != len(b):

@@ -25,7 +25,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
-from repository.db_session import Base
+from ..repository.db_session import Base
 
 
 class Tenant(Base):

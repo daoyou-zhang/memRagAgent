@@ -14,8 +14,8 @@ from loguru import logger
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from shared.auth import flask_auth_required, apply_project_filter, Scopes
 
-from repository.db_session import SessionLocal
-from models.memory import (
+from ..repository.db_session import SessionLocal
+from ..models.memory import (
     Memory,
     MemoryGenerationJob,
     ConversationSession,
@@ -24,7 +24,7 @@ from models.memory import (
     ProfileHistory,
     MemoryEmbedding,
 )
-from llm_client import (
+from ..llm_client import (
     generate_episodic_summary,
     generate_semantic_memories,
     generate_profile_from_semantics,
@@ -32,8 +32,8 @@ from llm_client import (
     UNIFIED_MEMORY_GENERATION,
     PROMPT_EVOLUTION_ENABLED,
 )
-from embeddings_client import generate_embedding
-from services.vector_service import get_memory_vector_service
+from ..embeddings_client import generate_embedding
+from ..services.vector_service import get_memory_vector_service
 
 import os
 import math

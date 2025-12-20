@@ -20,12 +20,12 @@ import json
 import sys
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Depends, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 # 添加 shared 到路径
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-from shared.auth import fastapi_auth_optional, AuthContext, Scopes, get_api_key_from_fastapi_request
+from shared.auth import get_api_key_from_fastapi_request
 
 from ..models.cognitive import CognitiveRequest, CognitiveResponse
 from ..services.cognitive_controller import get_cognitive_controller
@@ -40,7 +40,6 @@ _controller = get_cognitive_controller()
 async def process_cognitive_request(
     request: CognitiveRequest,
     raw_request: Request,
-    auth: AuthContext = Depends(fastapi_auth_optional),
 ):
     """Process a cognitive request via Daoyou's cognitive controller.
 

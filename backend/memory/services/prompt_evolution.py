@@ -20,8 +20,8 @@ from loguru import logger
 
 from sqlalchemy.orm import Session
 
-from models.memory import PromptEvolutionHistory
-from repository.db_session import SessionLocal
+from ..models.memory import PromptEvolutionHistory
+from ..repository.db_session import SessionLocal
 
 # Agent 服务 URL
 AGENT_SERVICE_URL = os.getenv("AGENT_SERVICE_URL", "http://127.0.0.1:8000")

@@ -39,7 +39,7 @@ from ..models.prompt_config import PromptConfigCreate
 from ..services.prompt_service import get_prompt_service
 from .context_aggregator import get_context_aggregator
 from .ai_service_adapter import get_intent_client, get_response_client, get_ai_service, LLMClient, LLMConfig
-from .memory_client import get_memory_client
+from .memory_backend import get_memory_backend
 from .tool_orchestrator import get_tool_orchestrator
 
 
@@ -431,13 +431,29 @@ class CognitiveController:
         if light_context.get("working_memory"):
             base_intent_context["working_memory"] = light_context.get("working_memory")
         logger.debug(f"合并后的上下文: {base_intent_context}")
-        # 1. 意图理解（使用 LLM）
-        intent = await self._understand_intent(
-            user_input=request.input,
-            context=base_intent_context,
-            prompt_config=prompt_config,
-        )
-        logger.info(f"意图分析完成: category={intent.category}, confidence={intent.confidence}, needs_tool={intent.needs_tool}")
+
+        # 1. 意图理解（使用 LLM，可通过 enable_intent 关闭）
+        if getattr(request, "enable_intent", True):
+            intent = await self._understand_intent(
+                user_input=request.input,
+                context=base_intent_context,
+                prompt_config=prompt_config,
+            )
+            logger.info(
+                f"意图分析完成: category={intent.category}, confidence={intent.confidence}, needs_tool={intent.needs_tool}"
+            )
+        else:
+            intent = Intent(
+                category="other",
+                confidence=0.0,
+                entities=[],
+                query=request.input,
+                context=base_intent_context or None,
+                summary=None,
+                needs_tool=False,
+                suggested_tools=[],
+            )
+            logger.info("意图分析已通过 enable_intent=False 被禁用，使用默认意图。")
 
         # 1.5 根据 agent_id / 意图类别重新获取 Prompt（使用数据库优先级 + 类别约束）
         if not request.response_system_prompt:
@@ -483,7 +499,7 @@ class CognitiveController:
 
         # 2. 工具调用（如果需要）
         tool_result: Optional[ToolResult] = None
-        if intent.needs_tool:
+        if getattr(request, "enable_intent", True) and request.enable_tools and intent.needs_tool:
             tool_result = await self.tool_orchestrator.process(
                 user_input=request.input,
                 intent=intent,
@@ -605,7 +621,20 @@ class CognitiveController:
         try:
             # 1. 意图理解
             prompt_config = self._get_prompt_config(request)
-            intent = await self._understand_intent(request.input, request.context, prompt_config)
+            if getattr(request, "enable_intent", True):
+                intent = await self._understand_intent(request.input, request.context or {}, prompt_config)
+            else:
+                intent = Intent(
+                    category="other",
+                    confidence=0.0,
+                    entities=[],
+                    query=request.input,
+                    context=request.context or None,
+                    summary=None,
+                    needs_tool=False,
+                    suggested_tools=[],
+                )
+                logger.info("流式意图分析已通过 enable_intent=False 被禁用，使用默认意图。")
             
             # 发送意图事件
             intent_data = {
@@ -613,12 +642,13 @@ class CognitiveController:
                 "confidence": intent.confidence,
                 "summary": intent.summary,
                 "needs_tool": intent.needs_tool,
+                "intent_disabled": not getattr(request, "enable_intent", True),
             }
             yield f"event: intent\ndata: {json.dumps(intent_data, ensure_ascii=False)}\n\n"
             
             # 2. 工具调用（如果需要）
             tool_result = None
-            if request.enable_tools and intent.needs_tool:
+            if request.enable_tools and getattr(request, "enable_intent", True) and intent.needs_tool:
                 tool_result = await self.tool_orchestrator.process(
                     user_input=request.input,
                     intent=intent,
@@ -717,16 +747,15 @@ class CognitiveController:
         processing_time: float = 0,
         project_id: Optional[str] = None,
     ) -> None:
-        """统一对话记录，由 memory 服务处理所有存储逻辑。
+        """统一对话记录，由 memory 后端处理所有存储逻辑。
 
-        调用 memory 服务的 /api/conversations/record 接口，传递：
-        - 原始问题、意图、工具结果、上下文、LLM 回复
-        - memory 服务负责存储对话、生成记忆、触发画像聚合
+        默认情况下通过 HTTP memory 服务；当 MEMORY_BACKEND=local 时，
+        使用本地 service 实现，避免对外部服务的强依赖。
         """
-        memory_client = get_memory_client()
+        memory_backend = get_memory_backend()
 
         try:
-            result = await memory_client.record_conversation(
+            result = await memory_backend.record_conversation(
                 user_id=request.user_id,
                 session_id=session_id,
                 project_id=project_id or request.project_id,
@@ -739,11 +768,12 @@ class CognitiveController:
                 } if intent else None,
                 tool_used=tool_result.tool_name if tool_result else None,
                 tool_result=str(tool_result.result)[:1000] if tool_result and tool_result.result else None,
+                context_used=None,
                 llm_response=response_text,
                 processing_time=processing_time,
                 auto_generate_memory=True,
             )
-            logger.debug(f"对话已记录到 memory 服务: {result}")
+            logger.debug(f"对话已记录到 memory 后端: {result}")
         except Exception as exc:
             logger.error(f"记录对话失败: {exc}")
 

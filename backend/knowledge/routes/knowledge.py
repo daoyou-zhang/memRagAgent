@@ -16,10 +16,10 @@ from sqlalchemy.orm import Session
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from shared.auth import flask_auth_required, apply_project_filter, Scopes
-from repository.db_session import SessionLocal
-from models.knowledge import KnowledgeCollection, KnowledgeDocument, KnowledgeChunk
-from processing.text_processing import TextProcessor
-from processing.embedding_processing import generate_embeddings_batch
+from ..repository.db_session import SessionLocal
+from ..models.knowledge import KnowledgeCollection, KnowledgeDocument, KnowledgeChunk
+from ..processing.text_processing import TextProcessor
+from ..processing.embedding_processing import generate_embeddings_batch
 
 knowledge_bp = Blueprint("knowledge", __name__)
 

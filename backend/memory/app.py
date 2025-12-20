@@ -7,21 +7,20 @@ import requests
 from flask import Flask
 from flask_cors import CORS
 
-from routes import memory_bp
-from routes.profiles import profiles_bp
-from routes.rag import rag_bp
-from routes.knowledge import knowledge_bp
-from routes.conversations import conversations_bp
-from routes.prompt_evolution import prompt_evolution_bp
-from routes.tenants import tenants_bp
-from repository.db_session import init_db, SessionLocal
-from models.memory import MemoryGenerationJob
+from .routes import memory_bp
+from .routes.profiles import profiles_bp
+from .routes.rag import rag_bp
+from .routes.knowledge import knowledge_bp
+from .routes.conversations import conversations_bp
+from .routes.prompt_evolution import prompt_evolution_bp
+from .routes.tenants import tenants_bp
+from .repository.db_session import init_db, SessionLocal
+from .models.memory import MemoryGenerationJob
 
 
 JOB_SCHEDULER_ENABLED = (
     os.getenv("JOB_SCHEDULER_ENABLED", "true").lower() in {"1", "true", "yes"}
 )
-JOB_RUN_WINDOW_EPISODIC = os.getenv("JOB_RUN_WINDOW_EPISODIC", "")
 JOB_RUN_WINDOW_SEMANTIC = os.getenv("JOB_RUN_WINDOW_SEMANTIC", "")
 JOB_RUN_WINDOW_PROFILE = os.getenv("JOB_RUN_WINDOW_PROFILE", "")
 

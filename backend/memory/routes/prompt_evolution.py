@@ -4,7 +4,7 @@
 """
 from flask import Blueprint, jsonify, request
 
-from services.prompt_evolution import get_prompt_evolution_service
+from ..services.prompt_evolution import get_prompt_evolution_service
 
 prompt_evolution_bp = Blueprint("prompt_evolution", __name__)
 

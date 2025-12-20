@@ -11,7 +11,7 @@ from loguru import logger
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from shared.auth import flask_auth_required, Scopes
-from tools.graph_client import get_neo4j_driver
+from ..tools.graph_client import get_neo4j_driver
 
 
 graph_bp = Blueprint("graph", __name__)

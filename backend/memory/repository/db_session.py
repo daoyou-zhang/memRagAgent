@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from models.memory import Base
+from ..models.memory import Base
 from dotenv import load_dotenv
 
 # 优先加载根目录的 .env，然后加载本地 .env（本地覆盖）

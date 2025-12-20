@@ -3,7 +3,7 @@ from __future__ import annotations
 from flask import Flask
 from flask_cors import CORS
 
-from routes.knowledge import knowledge_bp
+from .routes.knowledge import knowledge_bp
 
 
 def create_app() -> Flask:

@@ -73,6 +73,7 @@ class CognitiveRequest(BaseModel):
 
     # 控制选项
     stream: bool = False
+    enable_intent: bool = True
     enable_memory: bool = True
     memory_depth: int = 10
     rag_level: int = 0

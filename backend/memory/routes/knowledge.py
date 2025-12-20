@@ -8,9 +8,9 @@ from datetime import datetime
 from flask import Blueprint, jsonify, request
 from sqlalchemy.orm import Session
 
-from repository.db_session import SessionLocal
-from models.memory import Memory, KnowledgeInsight, SelfReflection
-from llm_client import extract_knowledge_insights, generate_profile_with_reflection
+from ..repository.db_session import SessionLocal
+from ..models.memory import Memory, KnowledgeInsight, SelfReflection
+from ..llm_client import extract_knowledge_insights, generate_profile_with_reflection
 
 knowledge_bp = Blueprint("knowledge", __name__)
 
@@ -172,7 +172,7 @@ def push_to_knowledge_service():
     }
     """
     import httpx
-    from embeddings_client import generate_embedding
+    from ..embeddings_client import generate_embedding
     
     data = request.get_json() or {}
     project_id = data.get("project_id")

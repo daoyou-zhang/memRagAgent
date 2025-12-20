@@ -9,7 +9,7 @@ from typing import Optional, List, Dict, Any, Tuple
 
 from sqlalchemy.orm import Session
 
-from models.tenant import Tenant, UserGroup, TenantUser, ApiKey
+from ..models.tenant import Tenant, UserGroup, TenantUser, ApiKey
 
 
 class TenantService:

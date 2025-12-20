@@ -9,9 +9,9 @@ from sqlalchemy.orm import Session
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from shared.auth import flask_auth_required, apply_project_filter, Scopes
-from repository.db_session import SessionLocal
-from models.memory import Memory, Profile, KnowledgeInsight
-from llm_client import generate_profile_from_semantics, generate_profile_with_reflection
+from ..repository.db_session import SessionLocal
+from ..models.memory import Memory, Profile, KnowledgeInsight
+from ..llm_client import generate_profile_from_semantics, generate_profile_with_reflection
 
 profiles_bp = Blueprint("profiles", __name__)
 

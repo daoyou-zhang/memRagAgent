@@ -7,8 +7,8 @@ from sqlalchemy.orm import Session
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from repository.db_session import SessionLocal
-from services.tenant_service import TenantService
+from ..repository.db_session import SessionLocal
+from ..services.tenant_service import TenantService
 
 
 tenants_bp = Blueprint("tenants", __name__)

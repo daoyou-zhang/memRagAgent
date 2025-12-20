@@ -70,7 +70,14 @@ function ProfilesPage() {
             {profile.project_id && <span>(project: {profile.project_id})</span>}
           </h3>
           <p className="muted-text">当前为 MVP：直接展示 raw_semantic_memories，后续会接入 LLM 聚合为结构化画像。</p>
-          <pre style={{ background: '#f5f5f5', padding: '0.75rem', overflowX: 'auto' }}>
+          <pre
+            style={{
+              background: '#ffffff',
+              color: '#111827',
+              padding: '0.75rem',
+              overflowX: 'auto',
+            }}
+          >
             {JSON.stringify(profile.profile, null, 2)}
           </pre>
         </div>

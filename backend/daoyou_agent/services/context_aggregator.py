@@ -20,9 +20,10 @@ import asyncio
 from typing import Any, Dict, List, Optional
 
 from loguru import logger
+import os
 
-from ..services.memory_client import get_memory_client
-from ..services.knowledge_client import get_knowledge_client
+from ..services.memory_backend import get_memory_backend
+from ..services.knowledge_backend import get_knowledge_backend
 
 
 class ContextAggregator:
@@ -34,8 +35,8 @@ class ContextAggregator:
 
     def __init__(self) -> None:
         """初始化上下文聚合器"""
-        self._memory_client = get_memory_client()
-        self._knowledge_client = get_knowledge_client()
+        self._memory_backend = get_memory_backend()
+        self._knowledge_backend = get_knowledge_backend()
         logger.info("上下文聚合器初始化完成（memRag + Knowledge）")
 
     async def get_cognitive_context(
@@ -163,7 +164,7 @@ class ContextAggregator:
         user_api_key: Optional[str] = None,
     ) -> Dict[str, Any]:
         """获取 Memory 服务上下文"""
-        return await self._memory_client.get_full_context(
+        return await self._memory_backend.get_full_context(
             user_id=user_id,
             project_id=project_id,
             session_id=session_id,
@@ -182,7 +183,7 @@ class ContextAggregator:
         user_api_key: Optional[str] = None,
     ) -> Dict[str, Any]:
         """获取 Knowledge 服务上下文"""
-        return await self._knowledge_client.rag_query(
+        return await self._knowledge_backend.rag_query(
             query=query,
             project_id=project_id,
             domain=domain,
@@ -199,8 +200,11 @@ class ContextAggregator:
     ) -> Dict[str, Any]:
         """获取知识图谱上下文"""
         import httpx
-        import os
-        
+
+        # 如果知识库后端配置为本地模式，则直接返回空结果，避免 HTTP 依赖
+        if os.getenv("KNOWLEDGE_BACKEND", "http").lower() == "local":
+            return {}
+
         knowledge_url = os.getenv("KNOWLEDGE_SERVICE_URL", "http://127.0.0.1:5001")
         
         # 优先使用用户的 API Key，保持租户隔离

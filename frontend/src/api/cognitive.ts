@@ -40,6 +40,7 @@ export interface CognitiveRequest {
 
   // 控制选项
   stream?: boolean
+  enable_intent?: boolean
   enable_memory?: boolean
   memory_depth?: number
   rag_level?: number
