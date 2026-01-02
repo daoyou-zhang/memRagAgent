@@ -17,6 +17,7 @@ import TenantsPage from './pages/TenantsPage'
 import SystemStatusPage from './pages/SystemStatusPage'
 import SettingsPage from './pages/SettingsPage'
 import StreamTestPage from './pages/StreamTestPage'
+import DigitalPersonPage from './pages/DigitalPersonPage'
 
 // 导航配置
 const navGroups = [
@@ -24,6 +25,7 @@ const navGroups = [
     title: '对话',
     items: [
       { path: '/cognitive', label: '认知对话', icon: '💬' },
+      { path: '/digital-person', label: '3D 数字人', icon: '👩' },
     ]
   },
   {
@@ -111,6 +113,7 @@ function Sidebar() {
 const pageTitles: Record<string, string> = {
   '/': '首页',
   '/cognitive': '认知对话',
+  '/digital-person': '3D 数字人',
   '/memories/create': '创建记忆',
   '/memories/query': '查询记忆',
   '/memories/cleanup': '记忆清理',
@@ -162,6 +165,7 @@ function AppShell() {
             <Route path="/knowledge/rag" element={<KnowledgeRagPage />} />
             <Route path="/graph" element={<GraphPage />} />
             <Route path="/cognitive" element={<CognitivePage />} />
+            <Route path="/digital-person" element={<DigitalPersonPage />} />
             <Route path="/tenants" element={<TenantsPage />} />
             <Route path="/system" element={<SystemStatusPage />} />
             <Route path="/settings" element={<SettingsPage />} />

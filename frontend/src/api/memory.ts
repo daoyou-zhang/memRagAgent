@@ -1,5 +1,9 @@
 import { http } from './http'
 
+// 可选：在生产环境下可通过环境变量直连后端（无 dev 代理）
+const MEMORY_BASE: string = (import.meta as any).env?.VITE_MEMORY_BASE || ''
+const withBase = (path: string) => (MEMORY_BASE ? `${MEMORY_BASE}${path}` : path)
+
 export type HealthResponse = {
   status: string
   service: string
@@ -25,7 +29,7 @@ export type QueryResultItem = {
 }
 
 export async function fetchMemoryHealth(): Promise<HealthResponse> {
-  return http.get<HealthResponse>('/api/memory/health')
+  return http.get<HealthResponse>(withBase('/api/memory/health'))
 }
 
 export type CreateMemoryPayload = {
@@ -41,7 +45,7 @@ export type CreateMemoryPayload = {
 }
 
 export async function createMemory(payload: CreateMemoryPayload): Promise<Memory> {
-  return http.post<Memory>('/api/memory/memories', payload)
+  return http.post<Memory>(withBase('/api/memory/memories'), payload)
 }
 
 export type QueryMemoriesPayload = {

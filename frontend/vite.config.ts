@@ -6,6 +6,11 @@ export default defineConfig({
   plugins: [react()],
   server: {
     proxy: {
+      // 认知服务（FastAPI）：/api/v1/cognitive/* -> 8000
+      '/api/v1/cognitive': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
       // 知识库服务：单独转发 /api/knowledge/* 到 5001
       '/api/knowledge': {
         target: 'http://localhost:5001',

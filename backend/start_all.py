@@ -50,7 +50,7 @@ def main():
     
     # 启动 Knowledge 服务
     start_service("Knowledge", "knowledge.app", 5001)
-    
+  
     # 等待依赖服务启动
     print("\n等待依赖服务启动 (3秒)...")
     time.sleep(3)
@@ -62,6 +62,7 @@ def main():
     print("  - Memory:      http://localhost:5000")
     print("  - Knowledge:   http://localhost:5001")
     print("  - Agent:       http://localhost:8000 (即将启动)")
+    print("  - AgentPerson: http://localhost:8010")
     print("=" * 50)
     
     # 启动 Agent 服务 (前台运行)

@@ -86,7 +86,7 @@ export async function cognitiveProcess(
   payload: CognitiveRequest,
   options?: { signal?: AbortSignal },
 ): Promise<CognitiveResponse> {
-  const resp = await fetch(`${DAOYOU_BASE}/api/v1/cognitive/process`, {
+  const resp = await fetch(`/api/v1/cognitive/process`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ...payload, stream: false }),

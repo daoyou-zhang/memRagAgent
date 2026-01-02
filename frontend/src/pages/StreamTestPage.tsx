@@ -1,5 +1,4 @@
 import { useRef, useState } from 'react'
-import { DAOYOU_BASE } from '../api/cognitive'
 
 function StreamTestPage() {
   const [input, setInput] = useState('你好，介绍一下你自己')
@@ -57,7 +56,7 @@ function StreamTestPage() {
     startTimeRef.current = Date.now()
 
     try {
-      const response = await fetch(`${DAOYOU_BASE}/api/v1/cognitive/process`, {
+      const response = await fetch(`/api/v1/cognitive/process`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -142,7 +141,7 @@ function StreamTestPage() {
     startTimeRef.current = Date.now()
 
     try {
-      const resp = await fetch(`${DAOYOU_BASE}/api/v1/cognitive/process`, {
+      const resp = await fetch(`/api/v1/cognitive/process`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
