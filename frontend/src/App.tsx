@@ -17,7 +17,6 @@ import TenantsPage from './pages/TenantsPage'
 import SystemStatusPage from './pages/SystemStatusPage'
 import SettingsPage from './pages/SettingsPage'
 import StreamTestPage from './pages/StreamTestPage'
-import DigitalPersonPage from './pages/DigitalPersonPage'
 
 // 导航配置
 const navGroups = [
@@ -165,7 +164,6 @@ function AppShell() {
             <Route path="/knowledge/rag" element={<KnowledgeRagPage />} />
             <Route path="/graph" element={<GraphPage />} />
             <Route path="/cognitive" element={<CognitivePage />} />
-            <Route path="/digital-person" element={<DigitalPersonPage />} />
             <Route path="/tenants" element={<TenantsPage />} />
             <Route path="/system" element={<SystemStatusPage />} />
             <Route path="/settings" element={<SettingsPage />} />
