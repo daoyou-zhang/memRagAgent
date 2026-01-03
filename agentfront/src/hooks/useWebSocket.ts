@@ -29,15 +29,24 @@ export const useWebSocket = (url: string, options: UseWebSocketOptions = {}) => 
   
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout>();
+  const shouldReconnectRef = useRef(true);
 
   const connect = useCallback(() => {
+    // 如果已经有连接，先关闭
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      console.log('⚠️ 已有活跃连接，跳过重连');
+      return;
+    }
+
     try {
+      console.log('🔌 尝试连接 WebSocket:', url);
       const ws = new WebSocket(url);
 
       ws.onopen = () => {
         console.log('✅ WebSocket 连接成功');
         setIsConnected(true);
         setReconnectCount(0);
+        shouldReconnectRef.current = true;
         onOpen?.();
       };
 
@@ -55,14 +64,14 @@ export const useWebSocket = (url: string, options: UseWebSocketOptions = {}) => 
         setIsConnected(false);
         onClose?.();
 
-        // 自动重连
-        if (reconnectCount < maxReconnectAttempts) {
+        // 只有在应该重连且未达到最大次数时才重连
+        if (shouldReconnectRef.current && reconnectCount < maxReconnectAttempts) {
           reconnectTimeoutRef.current = setTimeout(() => {
             console.log(`🔄 尝试重连 (${reconnectCount + 1}/${maxReconnectAttempts})...`);
             setReconnectCount(prev => prev + 1);
             connect();
           }, reconnectInterval);
-        } else {
+        } else if (reconnectCount >= maxReconnectAttempts) {
           console.log('❌ 达到最大重连次数，停止重连');
         }
       };
@@ -79,17 +88,21 @@ export const useWebSocket = (url: string, options: UseWebSocketOptions = {}) => 
   }, [url, onMessage, onOpen, onClose, onError, reconnectCount, maxReconnectAttempts, reconnectInterval]);
 
   useEffect(() => {
+    shouldReconnectRef.current = true;
     connect();
 
     return () => {
+      console.log('🧹 清理 WebSocket 连接');
+      shouldReconnectRef.current = false;
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
       }
       if (wsRef.current) {
         wsRef.current.close();
+        wsRef.current = null;
       }
     };
-  }, [connect]);
+  }, [url]); // 只在 URL 变化时重新连接
 
   const sendMessage = useCallback((data: any) => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
@@ -100,6 +113,7 @@ export const useWebSocket = (url: string, options: UseWebSocketOptions = {}) => 
   }, []);
 
   const disconnect = useCallback(() => {
+    shouldReconnectRef.current = false;
     if (wsRef.current) {
       wsRef.current.close();
     }
