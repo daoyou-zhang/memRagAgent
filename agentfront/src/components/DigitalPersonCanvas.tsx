@@ -16,33 +16,37 @@ interface DigitalPersonCanvasProps {
 }
 
 /**
- * 场景灯光
+ * 场景灯光 - 优化以减少塑料感
  */
 const Lights: React.FC = () => {
   return (
     <>
-      {/* 主光源（模拟太阳光） */}
+      {/* 主光源（模拟自然光，柔和一些） */}
       <directionalLight 
         position={[5, 8, 5]} 
-        intensity={1.8}
+        intensity={1.2}
         castShadow
         shadow-mapSize-width={2048}
         shadow-mapSize-height={2048}
+        color="#fff5e6"
       />
       
-      {/* 补光（柔和） */}
+      {/* 补光（从侧面，减少阴影） */}
       <directionalLight 
         position={[-5, 4, -3]} 
-        intensity={0.6}
+        intensity={0.8}
+        color="#e6f2ff"
       />
       
-      {/* 环境光 */}
-      <ambientLight intensity={0.5} />
+      {/* 环境光（增强，减少对比度） */}
+      <ambientLight intensity={0.8} />
       
-      {/* 点光源（营造氛围） */}
-      <pointLight position={[2, 2, 3]} intensity={1.2} color="#667eea" />
-      <pointLight position={[-2, 1, 2]} intensity={0.8} color="#764ba2" />
-      <pointLight position={[0, 0, -2]} intensity={0.6} color="#ff6b9d" />
+      {/* 半球光（模拟天空和地面反射） */}
+      <hemisphereLight 
+        color="#ffffff"
+        groundColor="#444444"
+        intensity={0.6}
+      />
     </>
   );
 };
