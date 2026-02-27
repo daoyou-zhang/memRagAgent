@@ -1,5 +1,0 @@
-CREATE TABLE IF NOT EXISTS payment_order_map (
-order_id VARCHAR(64) PRIMARY KEY,
-user_id UUID NOT NULL,
-created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW()
-);
