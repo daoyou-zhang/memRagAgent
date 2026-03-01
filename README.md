@@ -7,6 +7,8 @@
 [![React](https://img.shields.io/badge/react-19.2-61dafb.svg)](https://reactjs.org/)
 [![FastAPI](https://img.shields.io/badge/fastapi-0.104-009688.svg)](https://fastapi.tiangolo.com/)
 
+中文 | [English](README_EN.md)
+
 ## 项目简介
 
 memRagAgent 是一个创新的智能对话系统，通过记忆增强检索（Memory-Augmented RAG）技术，实现了具备长期记忆、自我学习和工具调用能力的 AI 助手。系统采用微服务架构，将认知、记忆和知识管理分离，构建了一个可扩展的智能体框架。
